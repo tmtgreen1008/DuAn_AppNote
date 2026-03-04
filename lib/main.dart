@@ -1,6 +1,6 @@
 // File: lib/main.dart
 import 'package:flutter/material.dart';
-import 'screens/dashboard_screen.dart'; // Import file màn hình
+import 'screens/login_screen.dart'; // [MỚI] Import màn hình đăng nhập
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,8 +20,8 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
       ),
-      // [QUAN TRỌNG] Đã sửa tên class từ StudentDashboard -> DashboardScreen
-      home: const DashboardScreen(),
+      // [QUAN TRỌNG] Đổi màn hình khởi động từ DashboardScreen thành LoginScreen
+      home: const LoginScreen(),
     );
   }
 }

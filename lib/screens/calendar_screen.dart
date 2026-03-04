@@ -1,7 +1,8 @@
-// File: lib/screens/calendar_screen.dart
 import 'package:flutter/material.dart';
+import 'package:table_calendar/table_calendar.dart';
 import '../services/database_helper.dart';
 import '../models/student_models.dart';
+import 'schedule_detail_screen.dart';
 
 class CalendarScreen extends StatefulWidget {
   const CalendarScreen({super.key});
@@ -10,163 +11,187 @@ class CalendarScreen extends StatefulWidget {
   State<CalendarScreen> createState() => _CalendarScreenState();
 }
 
-class _CalendarScreenState extends State<CalendarScreen> with SingleTickerProviderStateMixin {
-  late TabController _tabController;
+class _CalendarScreenState extends State<CalendarScreen> {
+  // Cấu hình hiển thị
+  CalendarFormat _calendarFormat = CalendarFormat.month; // Để mặc định là tháng cho bạn dễ nhìn tổng quan
+  DateTime _focusedDay = DateTime.now();
+  DateTime? _selectedDay;
 
-  // TabBar cho 7 ngày (Thứ 2 -> Chủ Nhật)
-  final List<String> _days = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "CN"];
+  // Dữ liệu hiển thị
+  List<ScheduleItem> _daySchedules = [];
+  List<ScheduleItem> _allSchedulesTemplate = []; // Dùng để vẽ dấu chấm (Markers)
+  bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 7, vsync: this);
+    _selectedDay = _focusedDay;
+    _initializeData();
+  }
+
+  // Hàm khởi tạo dữ liệu ban đầu
+  Future<void> _initializeData() async {
+    setState(() => _isLoading = true);
+
+    // Lấy tất cả lịch của học kỳ hiện tại để vẽ dấu chấm (Markers)
+    // Thay vì truyền cứng 'p2', ta tìm Plan dựa trên ngày hiện tại
+    final currentPlan = await DatabaseHelper().getPlanByDate(DateTime.now());
+    String planId = currentPlan != null ? currentPlan['id'] : 'p2';
+
+    final allData = await DatabaseHelper().getScheduleByDay(-1, planId);
+
+    setState(() {
+      _allSchedulesTemplate = allData;
+    });
+
+    // Sau khi có template, tải dữ liệu chi tiết cho ngày đang chọn
+    await _loadDataForSelectedDay(_selectedDay!);
+  }
+
+  // Hàm tải lịch học cho một ngày cụ thể
+  Future<void> _loadDataForSelectedDay(DateTime date) async {
+    setState(() => _isLoading = true);
+
+    final plan = await DatabaseHelper().getPlanByDate(date);
+
+    if (plan != null) {
+      // Logic chuyển đổi thứ: Flutter (1:Mon -> 7:Sun) sang DB (2:T2 -> 8:CN)
+      int dbDay = date.weekday == 7 ? 8 : date.weekday + 1;
+
+      final data = await DatabaseHelper().getScheduleByDay(dbDay, plan['id']);
+      setState(() {
+        _daySchedules = data;
+        _isLoading = false;
+      });
+    } else {
+      setState(() {
+        _daySchedules = [];
+        _isLoading = false;
+      });
+    }
+  }
+
+  // Hàm trả về "Sự kiện" cho mỗi ô ngày trên lịch tháng
+  List<dynamic> _getEventsForDay(DateTime day) {
+    // Chuyển ngày thành Thứ (2-8)
+    int dbDay = day.weekday == 7 ? 8 : day.weekday + 1;
+
+    // Trả về danh sách các môn học lặp lại vào thứ này
+    return _allSchedulesTemplate.where((s) => s.dayOfWeek == dbDay).toList();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[50],
+      backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text("Thời Khóa Biểu CNTT"),
-        centerTitle: true,
+        title: const Text("Lịch Học Tập", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
         backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
         elevation: 0,
-        bottom: TabBar(
-          controller: _tabController,
-          isScrollable: true, // Cho phép trượt ngang nếu màn hình nhỏ
-          labelColor: Colors.blue,
-          unselectedLabelColor: Colors.grey,
-          indicatorColor: Colors.blue,
-          indicatorWeight: 3,
-          labelStyle: const TextStyle(fontWeight: FontWeight.bold),
-          tabs: _days.map((day) => Tab(text: day)).toList(),
-        ),
+        centerTitle: true,
+        leading: const BackButton(color: Colors.black),
+        actions: [
+          IconButton(
+            icon: Icon(_calendarFormat == CalendarFormat.month ? Icons.view_week : Icons.calendar_view_month, color: Colors.blue),
+            onPressed: () => setState(() => _calendarFormat = _calendarFormat == CalendarFormat.month ? CalendarFormat.week : CalendarFormat.month),
+          )
+        ],
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: List.generate(7, (index) {
-          // index 0 là Thứ 2 (dayOfWeek = 2 trong database)
-          return ScheduleList(dayOfWeek: index + 2);
-        }),
+      body: Column(
+        children: [
+          // BỘ LỊCH CÓ EVENT LOADER
+          TableCalendar(
+            firstDay: DateTime.utc(2025, 1, 1),
+            lastDay: DateTime.utc(2030, 12, 31),
+            focusedDay: _focusedDay,
+            calendarFormat: _calendarFormat,
+            selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+            eventLoader: _getEventsForDay, // Đây là dòng quan trọng để hiện dấu chấm
+
+            // Giao diện lịch
+            headerStyle: const HeaderStyle(formatButtonVisible: false, titleCentered: true),
+            calendarStyle: CalendarStyle(
+              markerDecoration: const BoxDecoration(color: Colors.orange, shape: BoxShape.circle), // Màu dấu chấm
+              selectedDecoration: const BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
+              todayDecoration: BoxDecoration(color: Colors.blue.withOpacity(0.2), shape: BoxShape.circle),
+              todayTextStyle: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold),
+            ),
+
+            onDaySelected: (selectedDay, focusedDay) {
+              setState(() {
+                _selectedDay = selectedDay;
+                _focusedDay = focusedDay;
+              });
+              _loadDataForSelectedDay(selectedDay);
+            },
+            onFormatChanged: (format) => setState(() => _calendarFormat = format),
+            onPageChanged: (focusedDay) => _focusedDay = focusedDay,
+          ),
+
+          const SizedBox(height: 10),
+
+          // DANH SÁCH MÔN HỌC
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.grey[50],
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+              ),
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _daySchedules.isEmpty ? _buildEmptyState() : _buildScheduleList(),
+            ),
+          ),
+        ],
       ),
     );
   }
-}
 
-// Widget con: Danh sách môn học của 1 ngày cụ thể
-class ScheduleList extends StatefulWidget {
-  final int dayOfWeek;
-  const ScheduleList({super.key, required this.dayOfWeek});
-
-  @override
-  State<ScheduleList> createState() => _ScheduleListState();
-}
-
-class _ScheduleListState extends State<ScheduleList> {
-  List<ScheduleItem> items = [];
-  bool loading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadData();
-  }
-
-  // --- [PHẦN QUAN TRỌNG ĐÃ SỬA] ---
-  // Thêm try-catch để không bao giờ bị treo loading
-  void _loadData() async {
-    try {
-      // Gọi hàm lấy lịch từ DatabaseHelper
-      final data = await DatabaseHelper().getScheduleByDay(widget.dayOfWeek);
-
-      if(mounted) {
-        setState(() {
-          items = data;
-          loading = false; // Tắt loading khi thành công
-        });
-      }
-    } catch (e) {
-      print("❌ Lỗi tải lịch (Ngày ${widget.dayOfWeek}): $e");
-      // Nếu có lỗi, vẫn phải tắt loading để màn hình hiện lên
-      if(mounted) {
-        setState(() {
-          loading = false;
-        });
-      }
-    }
-  }
-  // --------------------------------
-
-  @override
-  Widget build(BuildContext context) {
-    if (loading) return const Center(child: CircularProgressIndicator());
-
-    // Nếu ngày đó không có lịch
-    if (items.isEmpty) return Center(child: Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(Icons.weekend, size: 80, color: Colors.grey[300]),
-        const SizedBox(height: 10),
-        Text("Ngày nghỉ! Không có lịch học.", style: TextStyle(color: Colors.grey[500], fontSize: 16)),
-      ],
-    ));
-
-    // Nếu có lịch
+  Widget _buildScheduleList() {
     return ListView.builder(
-      padding: const EdgeInsets.all(15),
-      itemCount: items.length,
+      padding: const EdgeInsets.all(20),
+      itemCount: _daySchedules.length,
       itemBuilder: (context, index) {
-        final item = items[index];
+        final item = _daySchedules[index];
         return Container(
-          margin: const EdgeInsets.only(bottom: 15),
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(15),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(15),
-            // Đường viền màu bên trái để phân biệt môn
-            border: Border(left: BorderSide(color: Color(item.colorCode), width: 6)),
-            boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.08), blurRadius: 10, offset: const Offset(0, 4))],
+            boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4, offset: const Offset(0, 2))],
           ),
-          child: Padding(
-            padding: const EdgeInsets.all(15),
-            child: Row(
-              children: [
-                // Cột 1: Thời gian
-                Column(
+          child: Row(
+            children: [
+              Container(width: 5, height: 40, color: Color(item.colorCode)),
+              const SizedBox(width: 15),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(item.startTime, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                    Container(height: 20, width: 2, color: Colors.grey[200], margin: const EdgeInsets.symmetric(vertical: 2)),
-                    Text(item.endTime, style: TextStyle(color: Colors.grey[500], fontSize: 13)),
+                    Text(item.subjectName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                    Text("${item.startTime} - ${item.endTime} | Phòng: ${item.room}", style: TextStyle(color: Colors.grey[600])),
                   ],
                 ),
-                const SizedBox(width: 20),
-
-                // Cột 2: Thông tin chi tiết
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(item.subjectName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Icon(Icons.location_on, size: 14, color: Colors.blue[400]),
-                          const SizedBox(width: 4),
-                          Text(item.room, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
-                          const SizedBox(width: 15),
-                          Icon(Icons.person, size: 14, color: Colors.orange[400]),
-                          const SizedBox(width: 4),
-                          Text(item.teacher, style: const TextStyle(fontSize: 13)),
-                        ],
-                      )
-                    ],
-                  ),
-                )
-              ],
-            ),
+              ),
+              const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
+            ],
           ),
         );
       },
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.coffee_outlined, size: 60, color: Colors.grey[300]),
+          const SizedBox(height: 10),
+          const Text("Không có lịch học, nghỉ ngơi thôi!", style: TextStyle(color: Colors.grey)),
+        ],
+      ),
     );
   }
 }
