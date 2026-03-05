@@ -1,4 +1,6 @@
 // File: lib/services/database_helper.dart
+import 'dart:ui';
+
 import 'package:intl/intl.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
@@ -377,5 +379,107 @@ class DatabaseHelper {
         'categories': [],
       };
     }
+  }
+  Future<void> addPlan(String title, String startDate, String endDate) async {
+    final db = await database;
+    String id = 'p_${DateTime.now().millisecondsSinceEpoch}'; // Tạo ID ngẫu nhiên
+    await db.insert('plans', {
+      'id': id,
+      'title': title,
+      'startDate': startDate,
+      'endDate': endDate,
+      'status': 'active' // Mặc định là đang hoạt động
+    });
+  }
+
+  // Xóa Học kỳ
+  Future<void> deletePlan(String id) async {
+    final db = await database;
+    await db.delete('plans', where: 'id = ?', whereArgs: [id]);
+    // Lưu ý: Thực tế khi xóa học kỳ, ta nên xóa cả môn học và lịch của kỳ đó.
+    // Tạm thời ta chỉ xóa Plan để UI hoạt động trước.
+  }
+  Future<List<Map<String, dynamic>>> getSubjectsByPlan(String planId) async {
+    final db = await database;
+    return await db.query('subjects', where: 'planId = ?', whereArgs: [planId]);
+  }
+
+  // 2. Thêm môn học mới vào kỳ
+  Future<void> addSubject(String planId, String name, String teacherName, int colorCode) async {
+    final db = await database;
+    await db.insert('subjects', {
+      'id': 'sub_${DateTime.now().millisecondsSinceEpoch}',
+      'planId': planId,
+      'name': name,
+      'teacherName': teacherName,
+      'credit': 3, // Mặc định là 3 tín chỉ
+      'colorCode': colorCode
+    });
+  }
+  Future<void> addSchedule(String planId, String subjectName, String teacher, String room, String startTime, String endTime, int dayOfWeek, int colorCode) async {
+    final db = await database;
+    await db.insert('timetable', {
+      'id': 't_${DateTime.now().millisecondsSinceEpoch}',
+      'planId': planId,
+      'subjectName': subjectName,
+      'teacher': teacher,
+      'room': room,
+      'startTime': startTime,
+      'endTime': endTime,
+      'dayOfWeek': dayOfWeek,
+      'colorCode': colorCode,
+    });
+  }
+  // --- LẤY CÔNG VIỆC THEO NGÀY CỤ THỂ (Dùng cho Calendar) ---
+  Future<List<TaskItem>> getTasksByDate(DateTime date) async {
+    final db = await database;
+    String dateStr = DateFormat('yyyy-MM-dd').format(date); // Chuyển ngày thành chuỗi yyyy-MM-dd
+
+    final res = await db.rawQuery('''
+      SELECT ti.id, ti.date, ti.isCompleted, td.title, s.name as subjectName, 
+             s.colorCode as subjectColor, c.colorCode as categoryColor, n.remindAt
+      FROM task_instances ti
+      JOIN tasks_definition td ON ti.taskDefId = td.id
+      LEFT JOIN subjects s ON td.subjectId = s.id
+      JOIN categories c ON td.categoryId = c.id
+      LEFT JOIN notifications n ON n.instanceId = ti.id
+      WHERE ti.date = ? 
+    ''', [dateStr]); // Lọc theo ngày được chọn
+
+    return res.map((e) {
+      var map = Map<String, dynamic>.from(e);
+      map['colorCode'] = e['subjectColor'] ?? e['categoryColor'] ?? 0xFF2196F3;
+      return TaskItem.fromMap(map);
+    }).toList();
+  }
+  // --- LẤY MÀU SẮC CÁC CHẤM TRÒN (MARKERS) CHO LỊCH ---
+  Future<Map<String, List<Color>>> getTaskMarkers() async {
+    final db = await database;
+    final res = await db.rawQuery('''
+      SELECT ti.date, s.colorCode as subjectColor, c.colorCode as categoryColor
+      FROM task_instances ti
+      JOIN tasks_definition td ON ti.taskDefId = td.id
+      JOIN categories c ON td.categoryId = c.id
+      LEFT JOIN subjects s ON td.subjectId = s.id
+    ''');
+
+    Map<String, List<Color>> markers = {};
+    for (var row in res) {
+      String date = row['date'] as String;
+      // Ưu tiên màu môn học, nếu không có thì lấy màu danh mục
+      int colorValue = (row['subjectColor'] as int?) ?? (row['categoryColor'] as int?) ?? 0xFF2196F3;
+      Color color = Color(colorValue);
+
+      if (!markers.containsKey(date)) {
+        markers[date] = [];
+      }
+
+      // Lọc màu trùng (nếu 1 ngày có 3 task cùng danh mục thì chỉ hiện 1 chấm màu đó)
+      // Và giới hạn tối đa 4 chấm để lịch không bị tràn
+      if (!markers[date]!.contains(color) && markers[date]!.length < 4) {
+        markers[date]!.add(color);
+      }
+    }
+    return markers;
   }
 }

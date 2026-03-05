@@ -8,6 +8,7 @@ import 'calendar_screen.dart';
 import 'category_detail_screen.dart';
 import 'add_task_screen.dart';
 import 'task_detail_screen.dart';
+import 'plan_list_screen.dart'; // Thêm dòng này
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -125,6 +126,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ],
         ),
         actions: [
+          Container(
+            margin: const EdgeInsets.only(right: 10),
+            decoration: BoxDecoration(color: Colors.orange[50], borderRadius: BorderRadius.circular(10)),
+            child: IconButton(
+              icon: const Icon(Icons.folder_special, color: Colors.orange),
+              tooltip: "Quản lý Học kỳ",
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const PlanListScreen()),
+                );
+              },
+            ),
+          ),
           // --- [MỚI THÊM] NÚT BÁO CÁO THỐNG KÊ ---
           Container(
             margin: const EdgeInsets.only(right: 10),
