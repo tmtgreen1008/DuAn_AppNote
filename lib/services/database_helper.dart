@@ -22,7 +22,7 @@ class DatabaseHelper {
 
   Future<Database> _initDatabase() async {
     // [QUAN TRỌNG] Đổi tên DB thành v300 để tạo bảng mới có cột description và bảng subtasks
-    String path = join(await getDatabasesPath(), 'student_planner_v303.db');
+    String path = join(await getDatabasesPath(), 'student_planner_v305.db');
 
     return await openDatabase(
       path,
@@ -78,8 +78,13 @@ class DatabaseHelper {
     await db.execute('''
       CREATE TABLE timetable (
         id TEXT PRIMARY KEY, 
-        planId TEXT,  -- Cột mới để phân biệt học kỳ
-        subjectName TEXT, room TEXT, teacher TEXT, startTime TEXT, endTime TEXT, dayOfWeek INTEGER, colorCode INTEGER
+        planId TEXT,  
+        subjectName TEXT, room TEXT, teacher TEXT, startTime TEXT, endTime TEXT, 
+        dayOfWeek INTEGER, 
+        specificDate TEXT, 
+        fromDate TEXT, 
+        toDate TEXT,   
+        colorCode INTEGER
       )
     ''');
     await _seedFullData(db);
@@ -248,21 +253,24 @@ class DatabaseHelper {
 
   // 2. Hàm gọi (Nơi có thể bạn đang bị lỗi)
   Future<List<ScheduleItem>> getClassesForDate(DateTime date) async {
-    // B1: Tìm học kỳ
     final plan = await getPlanByDate(date);
+    if (plan == null) return [];
 
-    if (plan == null) {
-      return [];
-    }
-
-    // B2: Tính thứ
     int flutterWeekday = date.weekday;
     int dbDayOfWeek = flutterWeekday == 7 ? 8 : flutterWeekday + 1;
+    String dateStr = DateFormat('yyyy-MM-dd').format(date);
 
-    // B3: Gọi hàm (SỬA LỖI TẠI ĐÂY)
-    // Cũ (Sai): return await getScheduleByDay(dbDayOfWeek);
-    // Mới (Đúng): Truyền thêm plan['id'] vào
-    return await getScheduleByDay(dbDayOfWeek, plan['id']);
+    final db = await database;
+    // [QUAN TRỌNG] Logic: Lấy lịch nếu Thứ trùng khớp VÀ ngày hiện tại nằm giữa fromDate - toDate
+    final res = await db.rawQuery('''
+      SELECT * FROM timetable 
+      WHERE planId = ? AND (
+        (dayOfWeek = ? AND date(?) >= date(fromDate) AND date(?) <= date(toDate))
+        OR specificDate = ?
+      )
+    ''', [plan['id'], dbDayOfWeek, dateStr, dateStr, dateStr]);
+
+    return res.map((e) => ScheduleItem.fromMap(e)).toList();
   }
   Future<int> deleteSchedule(String id) async {
     final db = await database;
@@ -416,7 +424,7 @@ class DatabaseHelper {
       'colorCode': colorCode
     });
   }
-  Future<void> addSchedule(String planId, String subjectName, String teacher, String room, String startTime, String endTime, int dayOfWeek, int colorCode) async {
+  Future<void> addSchedule(String planId, String subjectName, String teacher, String room, String startTime, String endTime, int dayOfWeek, int colorCode, {String? specificDate, String? fromDate, String? toDate}) async {
     final db = await database;
     await db.insert('timetable', {
       'id': 't_${DateTime.now().millisecondsSinceEpoch}',
@@ -427,6 +435,9 @@ class DatabaseHelper {
       'startTime': startTime,
       'endTime': endTime,
       'dayOfWeek': dayOfWeek,
+      'specificDate': specificDate,
+      'fromDate': fromDate, // Lưu ngày bắt đầu
+      'toDate': toDate,     // Lưu ngày kết thúc
       'colorCode': colorCode,
     });
   }
