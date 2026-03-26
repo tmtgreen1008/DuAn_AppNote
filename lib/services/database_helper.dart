@@ -493,4 +493,24 @@ class DatabaseHelper {
     }
     return markers;
   }
+  // --- LẤY LỊCH HỌC CHO 1 NGÀY CỤ THỂ (Dùng cho Daily Agenda) ---
+  Future<List<Map<String, dynamic>>> getClassesForSpecificDay(DateTime date) async {
+    final db = await database;
+    String dateStr = DateFormat('yyyy-MM-dd').format(date);
+    int targetWeekday = date.weekday == 7 ? 8 : date.weekday + 1; // Đổi sang Thứ (2-8)
+
+    // [ĐÃ SỬA LỖI] Hỗ trợ kiểm tra cả trường hợp fromDate/toDate bị NULL (dữ liệu cũ)
+    final res = await db.rawQuery('''
+      SELECT * FROM timetable 
+      WHERE specificDate = ? 
+         OR (dayOfWeek = ? AND 
+             (fromDate IS NULL OR date(?) >= date(fromDate)) AND 
+             (toDate IS NULL OR date(?) <= date(toDate))
+            )
+      ORDER BY startTime ASC
+    ''', [dateStr, targetWeekday, dateStr, dateStr]);
+
+    return res;
+  }
+
 }

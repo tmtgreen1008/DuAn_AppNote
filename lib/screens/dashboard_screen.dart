@@ -8,7 +8,7 @@ import 'calendar_screen.dart';
 import 'category_detail_screen.dart';
 import 'add_task_screen.dart';
 import 'task_detail_screen.dart';
-import 'plan_list_screen.dart'; // Thêm dòng này
+import 'plan_list_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -126,21 +126,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ],
         ),
         actions: [
+          // --- NÚT QUẢN LÝ HỌC KỲ (Đã thêm đồng bộ) ---
           Container(
             margin: const EdgeInsets.only(right: 10),
             decoration: BoxDecoration(color: Colors.orange[50], borderRadius: BorderRadius.circular(10)),
             child: IconButton(
               icon: const Icon(Icons.folder_special, color: Colors.orange),
               tooltip: "Quản lý Học kỳ",
-              onPressed: () {
-                Navigator.push(
+              onPressed: () async {
+                await Navigator.push(
                   context,
                   MaterialPageRoute(builder: (context) => const PlanListScreen()),
                 );
+                loadData(); // Cập nhật lại Dashboard khi từ trang Học kỳ quay về
               },
             ),
           ),
-          // --- [MỚI THÊM] NÚT BÁO CÁO THỐNG KÊ ---
+
+          // --- NÚT XEM BÁO CÁO THỐNG KÊ ---
           Container(
             margin: const EdgeInsets.only(right: 10),
             decoration: BoxDecoration(color: Colors.green[50], borderRadius: BorderRadius.circular(10)),
@@ -156,18 +159,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
           ),
 
-          // --- NÚT XEM LỊCH (Cũ của bạn) ---
+          // --- NÚT XEM LỊCH (Đã thêm đồng bộ) ---
           Container(
             margin: const EdgeInsets.only(right: 15),
             decoration: BoxDecoration(color: Colors.blue[50], borderRadius: BorderRadius.circular(10)),
             child: IconButton(
               icon: const Icon(Icons.calendar_month, color: Colors.blue),
               tooltip: "Xem Thời Khóa Biểu",
-              onPressed: () {
-                Navigator.push(
+              onPressed: () async {
+                await Navigator.push(
                   context,
                   MaterialPageRoute(builder: (context) => const CalendarScreen()),
                 );
+                loadData(); // Cập nhật lại Dashboard khi từ trang Lịch quay về
               },
             ),
           )
@@ -229,7 +233,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
               const SizedBox(height: 25),
 
-              // B. BẢNG ĐIỂM (ĐÃ NÂNG CẤP)
+              // B. BẢNG ĐIỂM
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
