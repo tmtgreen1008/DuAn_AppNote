@@ -9,6 +9,7 @@ import 'category_detail_screen.dart';
 import 'add_task_screen.dart';
 import 'task_detail_screen.dart';
 import 'plan_list_screen.dart';
+import 'brain_dump_screen.dart'; // [MỚI] Import màn hình Brain Dump
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -34,6 +35,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       await db.database;
       final t = await db.getTasksForToday();
       final s = await db.getScores();
+
+      // --- [ĐÃ TÍCH HỢP] SẮP XẾP TASK THEO THỜI GIAN TỪ SÁNG TỚI TỐI ---
+      t.sort((a, b) => a.time.compareTo(b.time));
 
       if (mounted) {
         setState(() {
@@ -100,18 +104,43 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return Scaffold(
       backgroundColor: Colors.grey[50],
 
-      // 1. NÚT THÊM VIỆC (FAB)
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const AddTaskScreen()),
-          );
-          if (result == true) loadData();
-        },
-        backgroundColor: Colors.blue,
-        icon: const Icon(Icons.add, color: Colors.white),
-        label: const Text("Thêm việc", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+      // ==========================================
+      // 1. NÚT THÊM VIỆC & BRAIN DUMP (FAB) ĐÃ CẬP NHẬT
+      // ==========================================
+      floatingActionButton: Column(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          // NÚT GHI CHÚ NHANH (MỚI)
+          FloatingActionButton(
+            heroTag: "dump",
+            onPressed: () async {
+              final res = await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const BrainDumpScreen())
+              );
+              if (res == true) loadData(); // Load lại lịch nếu có tự động xếp việc
+            },
+            backgroundColor: Colors.orange,
+            mini: true,
+            tooltip: "Ghi chú nhanh",
+            child: const Icon(Icons.note_alt, color: Colors.white),
+          ),
+          const SizedBox(height: 10),
+          // NÚT THÊM VIỆC CŨ
+          FloatingActionButton.extended(
+            heroTag: "add",
+            onPressed: () async {
+              final result = await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AddTaskScreen()),
+              );
+              if (result == true) loadData();
+            },
+            backgroundColor: Colors.blue,
+            icon: const Icon(Icons.add, color: Colors.white),
+            label: const Text("Thêm việc", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
       ),
 
       // 2. APP BAR
@@ -126,7 +155,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ],
         ),
         actions: [
-          // --- NÚT QUẢN LÝ HỌC KỲ (Đã thêm đồng bộ) ---
+          // --- NÚT QUẢN LÝ HỌC KỲ ---
           Container(
             margin: const EdgeInsets.only(right: 10),
             decoration: BoxDecoration(color: Colors.orange[50], borderRadius: BorderRadius.circular(10)),
@@ -138,7 +167,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   context,
                   MaterialPageRoute(builder: (context) => const PlanListScreen()),
                 );
-                loadData(); // Cập nhật lại Dashboard khi từ trang Học kỳ quay về
+                loadData();
               },
             ),
           ),
@@ -154,12 +183,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (context) => const ReportScreen()),
-                ).then((_) => loadData()); // Load lại Dashboard khi đóng màn hình Report
+                ).then((_) => loadData());
               },
             ),
           ),
 
-          // --- NÚT XEM LỊCH (Đã thêm đồng bộ) ---
+          // --- NÚT XEM LỊCH ---
           Container(
             margin: const EdgeInsets.only(right: 15),
             decoration: BoxDecoration(color: Colors.blue[50], borderRadius: BorderRadius.circular(10)),
@@ -171,7 +200,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   context,
                   MaterialPageRoute(builder: (context) => const CalendarScreen()),
                 );
-                loadData(); // Cập nhật lại Dashboard khi từ trang Lịch quay về
+                loadData();
               },
             ),
           )

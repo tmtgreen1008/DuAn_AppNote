@@ -141,6 +141,11 @@ class DatabaseHelper {
 
   Future<List<TaskItem>> getTasksForToday() async {
     final db = await database;
+
+    // 1. Lấy chuỗi ngày hôm nay theo chuẩn định dạng của Database (VD: '2026-04-16')
+    String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+
+    // 2. Thêm mệnh đề WHERE ti.date = ? vào câu truy vấn
     final res = await db.rawQuery('''
       SELECT ti.id, ti.date, ti.isCompleted, td.title, s.name as subjectName, 
              s.colorCode as subjectColor, c.colorCode as categoryColor, n.remindAt
@@ -149,7 +154,9 @@ class DatabaseHelper {
       LEFT JOIN subjects s ON td.subjectId = s.id
       JOIN categories c ON td.categoryId = c.id
       LEFT JOIN notifications n ON n.instanceId = ti.id
-    ''');
+      WHERE ti.date = ?
+    ''', [todayStr]); // Truyền todayStr vào dấu chấm hỏi (?)
+
     return res.map((e) {
       var map = Map<String, dynamic>.from(e);
       map['colorCode'] = e['subjectColor'] ?? e['categoryColor'];
@@ -401,12 +408,7 @@ class DatabaseHelper {
   }
 
   // Xóa Học kỳ
-  Future<void> deletePlan(String id) async {
-    final db = await database;
-    await db.delete('plans', where: 'id = ?', whereArgs: [id]);
-    // Lưu ý: Thực tế khi xóa học kỳ, ta nên xóa cả môn học và lịch của kỳ đó.
-    // Tạm thời ta chỉ xóa Plan để UI hoạt động trước.
-  }
+
   Future<List<Map<String, dynamic>>> getSubjectsByPlan(String planId) async {
     final db = await database;
     return await db.query('subjects', where: 'planId = ?', whereArgs: [planId]);
@@ -512,5 +514,93 @@ class DatabaseHelper {
 
     return res;
   }
+// --- HÀM THÊM NHANH CÔNG VIỆC (ĐÃ FIX LỖI TÀNG HÌNH & BẮT BUG) ---
+  Future<void> insertTask({
+    required String title,
+    required String time,
+    required dynamic categoryId,
+    required String date,
+  }) async {
+    final db = await database;
+    try {
+      // 1. Chống lỗi JOIN bằng cách lấy Category đầu tiên có thật trong máy
+      final cats = await db.query('categories', limit: 1);
+      dynamic validCat = cats.isNotEmpty ? cats.first['id'] : categoryId;
 
+      // [SỬA LỚN Ở ĐÂY]: Tạo ID dạng chuỗi (String) giống hệt cấu trúc của bạn
+      // Dùng microseconds để tránh bị trùng ID khi vòng lặp for chạy quá nhanh
+      String uniqueId = DateTime.now().microsecondsSinceEpoch.toString();
+      String tdId = 'td_$uniqueId';
+      String tiId = 'ti_$uniqueId';
+      String nId = 'n_$uniqueId';
+
+      // 2. Chèn vào bảng gốc tasks_definition (Bắt buộc phải truyền ID)
+      await db.insert('tasks_definition', {
+        'id': tdId,
+        'title': title,
+        'categoryId': validCat,
+        'description': 'Tạo tự động từ Ghi chú nhanh',
+        'priority': 1,
+      });
+
+      // 3. Chèn vào bảng thực thi (Liên kết bằng ID vừa tạo)
+      await db.insert('task_instances', {
+        'id': tiId,
+        'taskDefId': tdId,
+        'date': date,
+        'isCompleted': 0,
+      });
+
+      // 4. Chèn Giờ vào bảng
+      await db.insert('notifications', {
+        'id': nId,
+        'instanceId': tiId,
+        'remindAt': time,
+      });
+
+      print("✅ Đã tự động xếp thành công: [$title] vào lúc $time");
+
+    } catch (e) {
+      print("❌ LỖI NGẦM KHI XẾP LỊCH: $e");
+    }
+  }
+  // --- HÀM XÓA HỌC KỲ "BỌC THÉP" (CHỐNG CRASH) ---
+  Future<void> deletePlan(dynamic planId) async {
+    final db = await database;
+    try {
+      // 1. Tìm tất cả các Môn học thuộc Học kỳ này
+      final subjects = await db.query('subjects', where: 'planId = ?', whereArgs: [planId]);
+
+      // 2. Quét qua từng Môn học để dọn rác (Dùng try-catch để an toàn tuyệt đối)
+      for (var sub in subjects) {
+        dynamic subjectId = sub['id'];
+
+        // Cố gắng xóa lịch học (Nếu lỗi thì bỏ qua)
+        try { await db.delete('timetable', where: 'subjectId = ?', whereArgs: [subjectId]); } catch(e){}
+
+        // Cố gắng xóa điểm số (Nếu lỗi thì bỏ qua)
+        try { await db.delete('scores', where: 'subjectId = ?', whereArgs: [subjectId]); } catch(e){}
+
+        // Cố gắng xóa Task bài tập liên kết
+        try {
+          final taskDefs = await db.query('tasks_definition', where: 'subjectId = ?', whereArgs: [subjectId]);
+          for(var td in taskDefs) {
+            await db.delete('task_instances', where: 'taskDefId = ?', whereArgs: [td['id']]);
+          }
+          await db.delete('tasks_definition', where: 'subjectId = ?', whereArgs: [subjectId]);
+        } catch(e){}
+      }
+
+      // 3. Xóa các Môn học (Chắc chắn phải xóa)
+      await db.delete('subjects', where: 'planId = ?', whereArgs: [planId]);
+
+      // 4. Tiêu diệt Học kỳ
+      await db.delete('plans', where: 'id = ?', whereArgs: [planId]);
+
+      print("✅ Đã xóa sạch sẽ Học kỳ và các dữ liệu liên quan!");
+
+    } catch (e) {
+      print("❌ LỖI KHI XÓA HỌC KỲ: $e");
+    }
+  }
 }

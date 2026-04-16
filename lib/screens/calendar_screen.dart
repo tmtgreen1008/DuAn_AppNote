@@ -55,6 +55,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final classes = await DatabaseHelper().getClassesForSpecificDay(date);
     final tasks = await DatabaseHelper().getTasksByDate(date);
 
+    // --- [ĐÃ TÍCH HỢP] SẮP XẾP TASK THEO THỜI GIAN TỪ SÁNG TỚI TỐI ---
+    tasks.sort((a, b) => a.time.compareTo(b.time));
+
     if (mounted) {
       setState(() {
         _dayClasses = classes;
