@@ -21,8 +21,8 @@ class DatabaseHelper {
   }
 
   Future<Database> _initDatabase() async {
-    // [QUAN TRỌNG] Đổi tên DB thành v300 để tạo bảng mới có cột description và bảng subtasks
-    String path = join(await getDatabasesPath(), 'student_planner_v305.db');
+    // [QUAN TRỌNG] Đổi tên DB thành v306 để ép tạo mới bảng có cột location và dueDate
+    String path = join(await getDatabasesPath(), 'student_planner_v306.db');
 
     return await openDatabase(
       path,
@@ -52,11 +52,11 @@ class DatabaseHelper {
       )
     ''');
 
-    // [CẬP NHẬT] Thêm cột description vào bảng tasks_definition
+    // [CẬP NHẬT] Thêm cột location và dueDate vào bảng tasks_definition
     await db.execute('''
       CREATE TABLE tasks_definition (
         id TEXT PRIMARY KEY, planId TEXT, categoryId TEXT, cycleId TEXT, subjectId TEXT, title TEXT, 
-        description TEXT, priority INTEGER,
+        description TEXT, priority INTEGER, location TEXT, dueDate TEXT,
         FOREIGN KEY (subjectId) REFERENCES subjects(id),
         FOREIGN KEY (categoryId) REFERENCES categories(id)
       )
@@ -73,7 +73,6 @@ class DatabaseHelper {
 
     await db.execute('CREATE TABLE notifications (id TEXT PRIMARY KEY, instanceId TEXT, remindAt TEXT)');
 
-    // [MỚI] Tạo bảng Subtasks
     await db.execute('CREATE TABLE subtasks (id TEXT PRIMARY KEY, instanceId TEXT, title TEXT, isCompleted INTEGER)');
     await db.execute('''
       CREATE TABLE timetable (
@@ -103,14 +102,11 @@ class DatabaseHelper {
     for (var i in SeedData.instancesToday) batch.insert('task_instances', i);
     for (var i in SeedData.notifications) batch.insert('notifications', i);
     for (var i in SeedData.timetable) batch.insert('timetable', i);
-
-    // [MỚI] Nạp subtask mẫu
     for (var i in SeedData.subtasks) batch.insert('subtasks', i);
 
     await batch.commit(noResult: true);
   }
 
-  // --- CÁC HÀM GET CŨ (GIỮ NGUYÊN) ---
   Future<List<Score>> getScores() async {
     final db = await database;
     final res = await db.rawQuery('SELECT sc.scoreValue, sc.type, s.name FROM scores sc JOIN subjects s ON sc.subjectId = s.id');
@@ -122,10 +118,8 @@ class DatabaseHelper {
     final List<Map<String, dynamic>> res;
 
     if (dayOfWeek == -1) {
-      // Lấy tất cả các môn trong học kỳ đó
       res = await db.query('timetable', where: 'planId = ?', whereArgs: [planId]);
     } else {
-      // Lấy theo thứ cụ thể
       res = await db.query('timetable',
           where: 'dayOfWeek = ? AND planId = ?',
           whereArgs: [dayOfWeek, planId]);
@@ -133,21 +127,18 @@ class DatabaseHelper {
     return res.map((e) => ScheduleItem.fromMap(e)).toList();
   }
 
-  // [MỚI] Hàm lấy danh sách các Học kỳ
   Future<List<Map<String, dynamic>>> getAllPlans() async {
     final db = await database;
-    return await db.query('plans', orderBy: 'startDate DESC'); // Mới nhất lên đầu
+    return await db.query('plans', orderBy: 'startDate DESC');
   }
 
   Future<List<TaskItem>> getTasksForToday() async {
     final db = await database;
-
-    // 1. Lấy chuỗi ngày hôm nay theo chuẩn định dạng của Database (VD: '2026-04-16')
     String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
 
-    // 2. Thêm mệnh đề WHERE ti.date = ? vào câu truy vấn
+    // [CẬP NHẬT] Lấy thêm location và dueDate
     final res = await db.rawQuery('''
-      SELECT ti.id, ti.date, ti.isCompleted, td.title, s.name as subjectName, 
+      SELECT ti.id, ti.date, ti.isCompleted, td.title, td.location, td.dueDate, s.name as subjectName, 
              s.colorCode as subjectColor, c.colorCode as categoryColor, n.remindAt
       FROM task_instances ti
       JOIN tasks_definition td ON ti.taskDefId = td.id
@@ -155,7 +146,7 @@ class DatabaseHelper {
       JOIN categories c ON td.categoryId = c.id
       LEFT JOIN notifications n ON n.instanceId = ti.id
       WHERE ti.date = ?
-    ''', [todayStr]); // Truyền todayStr vào dấu chấm hỏi (?)
+    ''', [todayStr]);
 
     return res.map((e) {
       var map = Map<String, dynamic>.from(e);
@@ -167,7 +158,7 @@ class DatabaseHelper {
   Future<List<TaskItem>> getTasksByCategory(String categoryId) async {
     final db = await database;
     final res = await db.rawQuery('''
-      SELECT td.id as id, td.title, c.colorCode, s.name as subjectName
+      SELECT td.id as id, td.title, td.location, td.dueDate, c.colorCode, s.name as subjectName
       FROM tasks_definition td
       JOIN categories c ON td.categoryId = c.id
       LEFT JOIN subjects s ON td.subjectId = s.id
@@ -175,8 +166,15 @@ class DatabaseHelper {
     ''', [categoryId]);
 
     return res.map((e) => TaskItem(
-      id: e['id'] as String, title: e['title'] as String, date: 'Danh sách tổng', isCompleted: false,
-      colorCode: e['colorCode'] as int, time: '', subjectName: e['subjectName'] as String?,
+      id: e['id'] as String,
+      title: e['title'] as String,
+      date: 'Danh sách tổng',
+      isCompleted: false,
+      colorCode: e['colorCode'] as int,
+      time: '',
+      subjectName: e['subjectName'] as String?,
+      location: e['location'] as String?,
+      dueDate: e['dueDate'] as String?,
     )).toList();
   }
 
@@ -190,24 +188,29 @@ class DatabaseHelper {
     await db.delete('task_instances', where: 'id = ?', whereArgs: [id]);
   }
 
-  Future<void> addTask(String title, String date, String time, String categoryId) async {
+  // [CẬP NHẬT] Thêm tham số location và dueDate vào hàm
+  Future<void> addTask(String title, String date, String time, String categoryId, {String? location, String? dueDate}) async {
     final db = await database;
     String uniqueId = DateTime.now().millisecondsSinceEpoch.toString();
     await db.insert('tasks_definition', {
-      'id': 'td_$uniqueId', 'planId': 'p1', 'categoryId': categoryId, 'subjectId': null, 'title': title, 'priority': 1,
-      'description': '' // Mặc định rỗng
+      'id': 'td_$uniqueId',
+      'planId': 'p1',
+      'categoryId': categoryId,
+      'subjectId': null,
+      'title': title,
+      'priority': 1,
+      'description': '',
+      'location': location, // Lưu dữ liệu mới
+      'dueDate': dueDate    // Lưu dữ liệu mới
     });
     await db.insert('task_instances', {'id': 'ti_$uniqueId', 'taskDefId': 'td_$uniqueId', 'date': date, 'isCompleted': 0});
     await db.insert('notifications', {'id': 'n_$uniqueId', 'instanceId': 'ti_$uniqueId', 'remindAt': time});
   }
 
-  // --- [MỚI] CÁC HÀM XỬ LÝ CHI TIẾT & SUBTASK ---
-
-  // 1. Lấy chi tiết Task (kèm Description)
   Future<Map<String, dynamic>> getTaskDetail(String instanceId) async {
     final db = await database;
     final res = await db.rawQuery('''
-      SELECT ti.id, td.title, td.description, c.name as categoryName, c.colorCode, ti.date, n.remindAt
+      SELECT ti.id, td.title, td.description, td.location, td.dueDate, c.name as categoryName, c.colorCode, ti.date, n.remindAt
       FROM task_instances ti
       JOIN tasks_definition td ON ti.taskDefId = td.id
       JOIN categories c ON td.categoryId = c.id
@@ -217,13 +220,11 @@ class DatabaseHelper {
     return res.isNotEmpty ? res.first : {};
   }
 
-  // 2. Lấy danh sách Subtasks
   Future<List<Map<String, dynamic>>> getSubtasks(String instanceId) async {
     final db = await database;
     return await db.query('subtasks', where: 'instanceId = ?', whereArgs: [instanceId]);
   }
 
-  // 3. Thêm Subtask
   Future<void> addSubtask(String instanceId, String title) async {
     final db = await database;
     String id = DateTime.now().millisecondsSinceEpoch.toString();
@@ -232,13 +233,11 @@ class DatabaseHelper {
     });
   }
 
-  // 4. Toggle Subtask
   Future<void> toggleSubtask(String id, bool val) async {
     final db = await database;
     await db.update('subtasks', {'isCompleted': val ? 1 : 0}, where: 'id = ?', whereArgs: [id]);
   }
 
-  // 5. Xóa Subtask
   Future<void> deleteSubtask(String id) async {
     final db = await database;
     await db.delete('subtasks', where: 'id = ?', whereArgs: [id]);
@@ -258,7 +257,6 @@ class DatabaseHelper {
     return null;
   }
 
-  // 2. Hàm gọi (Nơi có thể bạn đang bị lỗi)
   Future<List<ScheduleItem>> getClassesForDate(DateTime date) async {
     final plan = await getPlanByDate(date);
     if (plan == null) return [];
@@ -268,7 +266,6 @@ class DatabaseHelper {
     String dateStr = DateFormat('yyyy-MM-dd').format(date);
 
     final db = await database;
-    // [QUAN TRỌNG] Logic: Lấy lịch nếu Thứ trùng khớp VÀ ngày hiện tại nằm giữa fromDate - toDate
     final res = await db.rawQuery('''
       SELECT * FROM timetable 
       WHERE planId = ? AND (
@@ -279,6 +276,7 @@ class DatabaseHelper {
 
     return res.map((e) => ScheduleItem.fromMap(e)).toList();
   }
+
   Future<int> deleteSchedule(String id) async {
     final db = await database;
     return await db.delete(
@@ -287,41 +285,34 @@ class DatabaseHelper {
         whereArgs: [id]
     );
   }
+
   Future<bool> registerUser(String username, String password, String fullName) async {
     final db = await database;
-
-    // Kiểm tra xem username đã tồn tại chưa
     final check = await db.query('users', where: 'username = ?', whereArgs: [username]);
-    if (check.isNotEmpty) return false; // Tên đăng nhập đã bị trùng
+    if (check.isNotEmpty) return false;
 
-    // Thêm user mới vào DB
     await db.insert('users', {
-      'id': DateTime.now().millisecondsSinceEpoch.toString(), // Tạo ID ngẫu nhiên
+      'id': DateTime.now().millisecondsSinceEpoch.toString(),
       'username': username,
       'password': password,
       'fullName': fullName,
     });
-    return true; // Đăng ký thành công
+    return true;
   }
 
-  // 2. Đăng nhập
   Future<Map<String, dynamic>?> loginUser(String username, String password) async {
     final db = await database;
-
-    // Tìm user có đúng username và password
     final res = await db.query(
       'users',
       where: 'username = ? AND password = ?',
       whereArgs: [username, password],
     );
-
-    if (res.isNotEmpty) return res.first; // Trả về thông tin user
-    return null; // Sai tài khoản hoặc mật khẩu
+    if (res.isNotEmpty) return res.first;
+    return null;
   }
-  // Thêm điểm mới hoặc cập nhật nếu đã tồn tại
+
   Future<void> insertOrUpdateScore(String subjectId, String type, double value) async {
     final db = await database;
-    // Kiểm tra xem loại điểm này của môn này đã có chưa
     final existing = await db.query('scores',
         where: 'subjectId = ? AND type = ?',
         whereArgs: [subjectId, type]);
@@ -341,8 +332,6 @@ class DatabaseHelper {
 
   Future<List<Map<String, dynamic>>> getSubjectsForActivePlan() async {
     final db = await database;
-
-    // Tìm học kỳ hiện tại
     String today = DateTime.now().toIso8601String().split('T')[0];
     final planRes = await db.rawQuery('''
       SELECT * FROM plans 
@@ -351,25 +340,19 @@ class DatabaseHelper {
     ''', [today, today]);
 
     if (planRes.isEmpty) return [];
-
     String planId = planRes.first['id'] as String;
-
-    // Lấy các môn học thuộc học kỳ này
     return await db.query('subjects', where: 'planId = ?', whereArgs: [planId]);
   }
+
   Future<Map<String, dynamic>> getTaskStatistics() async {
     try {
       final db = await database;
-
-      // 1. Tổng quan toàn bộ công việc
       final totalRes = await db.rawQuery('SELECT COUNT(*) as cnt FROM task_instances');
       int total = (totalRes.isNotEmpty ? totalRes.first['cnt'] as int? : 0) ?? 0;
 
       final compRes = await db.rawQuery('SELECT COUNT(*) as cnt FROM task_instances WHERE isCompleted = 1');
       int completed = (compRes.isNotEmpty ? compRes.first['cnt'] as int? : 0) ?? 0;
 
-      // 2. Thống kê chi tiết theo từng danh mục
-      // [QUAN TRỌNG] Đã sửa đúng tên bảng thành 'tasks_definition'
       final catStats = await db.rawQuery('''
         SELECT c.name, c.colorCode, COUNT(ti.id) as totalTasks,
                IFNULL(SUM(CASE WHEN ti.isCompleted = 1 THEN 1 ELSE 0 END), 0) as completedTasks
@@ -388,33 +371,27 @@ class DatabaseHelper {
       };
     } catch (e) {
       print("❌ LỖI TRUY VẤN THỐNG KÊ: $e");
-      return {
-        'total': 0,
-        'completed': 0,
-        'categories': [],
-      };
+      return {'total': 0, 'completed': 0, 'categories': []};
     }
   }
+
   Future<void> addPlan(String title, String startDate, String endDate) async {
     final db = await database;
-    String id = 'p_${DateTime.now().millisecondsSinceEpoch}'; // Tạo ID ngẫu nhiên
+    String id = 'p_${DateTime.now().millisecondsSinceEpoch}';
     await db.insert('plans', {
       'id': id,
       'title': title,
       'startDate': startDate,
       'endDate': endDate,
-      'status': 'active' // Mặc định là đang hoạt động
+      'status': 'active'
     });
   }
-
-  // Xóa Học kỳ
 
   Future<List<Map<String, dynamic>>> getSubjectsByPlan(String planId) async {
     final db = await database;
     return await db.query('subjects', where: 'planId = ?', whereArgs: [planId]);
   }
 
-  // 2. Thêm môn học mới vào kỳ
   Future<void> addSubject(String planId, String name, String teacherName, int colorCode) async {
     final db = await database;
     await db.insert('subjects', {
@@ -422,10 +399,11 @@ class DatabaseHelper {
       'planId': planId,
       'name': name,
       'teacherName': teacherName,
-      'credit': 3, // Mặc định là 3 tín chỉ
+      'credit': 3,
       'colorCode': colorCode
     });
   }
+
   Future<void> addSchedule(String planId, String subjectName, String teacher, String room, String startTime, String endTime, int dayOfWeek, int colorCode, {String? specificDate, String? fromDate, String? toDate}) async {
     final db = await database;
     await db.insert('timetable', {
@@ -438,18 +416,19 @@ class DatabaseHelper {
       'endTime': endTime,
       'dayOfWeek': dayOfWeek,
       'specificDate': specificDate,
-      'fromDate': fromDate, // Lưu ngày bắt đầu
-      'toDate': toDate,     // Lưu ngày kết thúc
+      'fromDate': fromDate,
+      'toDate': toDate,
       'colorCode': colorCode,
     });
   }
-  // --- LẤY CÔNG VIỆC THEO NGÀY CỤ THỂ (Dùng cho Calendar) ---
+
   Future<List<TaskItem>> getTasksByDate(DateTime date) async {
     final db = await database;
-    String dateStr = DateFormat('yyyy-MM-dd').format(date); // Chuyển ngày thành chuỗi yyyy-MM-dd
+    String dateStr = DateFormat('yyyy-MM-dd').format(date);
 
+    // [CẬP NHẬT] Lấy thêm location và dueDate
     final res = await db.rawQuery('''
-      SELECT ti.id, ti.date, ti.isCompleted, td.title, s.name as subjectName, 
+      SELECT ti.id, ti.date, ti.isCompleted, td.title, td.location, td.dueDate, s.name as subjectName, 
              s.colorCode as subjectColor, c.colorCode as categoryColor, n.remindAt
       FROM task_instances ti
       JOIN tasks_definition td ON ti.taskDefId = td.id
@@ -457,7 +436,7 @@ class DatabaseHelper {
       JOIN categories c ON td.categoryId = c.id
       LEFT JOIN notifications n ON n.instanceId = ti.id
       WHERE ti.date = ? 
-    ''', [dateStr]); // Lọc theo ngày được chọn
+    ''', [dateStr]);
 
     return res.map((e) {
       var map = Map<String, dynamic>.from(e);
@@ -465,7 +444,7 @@ class DatabaseHelper {
       return TaskItem.fromMap(map);
     }).toList();
   }
-  // --- LẤY MÀU SẮC CÁC CHẤM TRÒN (MARKERS) CHO LỊCH ---
+
   Future<Map<String, List<Color>>> getTaskMarkers() async {
     final db = await database;
     final res = await db.rawQuery('''
@@ -479,29 +458,24 @@ class DatabaseHelper {
     Map<String, List<Color>> markers = {};
     for (var row in res) {
       String date = row['date'] as String;
-      // Ưu tiên màu môn học, nếu không có thì lấy màu danh mục
       int colorValue = (row['subjectColor'] as int?) ?? (row['categoryColor'] as int?) ?? 0xFF2196F3;
       Color color = Color(colorValue);
 
       if (!markers.containsKey(date)) {
         markers[date] = [];
       }
-
-      // Lọc màu trùng (nếu 1 ngày có 3 task cùng danh mục thì chỉ hiện 1 chấm màu đó)
-      // Và giới hạn tối đa 4 chấm để lịch không bị tràn
       if (!markers[date]!.contains(color) && markers[date]!.length < 4) {
         markers[date]!.add(color);
       }
     }
     return markers;
   }
-  // --- LẤY LỊCH HỌC CHO 1 NGÀY CỤ THỂ (Dùng cho Daily Agenda) ---
+
   Future<List<Map<String, dynamic>>> getClassesForSpecificDay(DateTime date) async {
     final db = await database;
     String dateStr = DateFormat('yyyy-MM-dd').format(date);
-    int targetWeekday = date.weekday == 7 ? 8 : date.weekday + 1; // Đổi sang Thứ (2-8)
+    int targetWeekday = date.weekday == 7 ? 8 : date.weekday + 1;
 
-    // [ĐÃ SỬA LỖI] Hỗ trợ kiểm tra cả trường hợp fromDate/toDate bị NULL (dữ liệu cũ)
     final res = await db.rawQuery('''
       SELECT * FROM timetable 
       WHERE specificDate = ? 
@@ -514,7 +488,7 @@ class DatabaseHelper {
 
     return res;
   }
-// --- HÀM THÊM NHANH CÔNG VIỆC (ĐÃ FIX LỖI TÀNG HÌNH & BẮT BUG) ---
+
   Future<void> insertTask({
     required String title,
     required String time,
@@ -523,27 +497,24 @@ class DatabaseHelper {
   }) async {
     final db = await database;
     try {
-      // 1. Chống lỗi JOIN bằng cách lấy Category đầu tiên có thật trong máy
       final cats = await db.query('categories', limit: 1);
       dynamic validCat = cats.isNotEmpty ? cats.first['id'] : categoryId;
 
-      // [SỬA LỚN Ở ĐÂY]: Tạo ID dạng chuỗi (String) giống hệt cấu trúc của bạn
-      // Dùng microseconds để tránh bị trùng ID khi vòng lặp for chạy quá nhanh
       String uniqueId = DateTime.now().microsecondsSinceEpoch.toString();
       String tdId = 'td_$uniqueId';
       String tiId = 'ti_$uniqueId';
       String nId = 'n_$uniqueId';
 
-      // 2. Chèn vào bảng gốc tasks_definition (Bắt buộc phải truyền ID)
       await db.insert('tasks_definition', {
         'id': tdId,
         'title': title,
         'categoryId': validCat,
         'description': 'Tạo tự động từ Ghi chú nhanh',
         'priority': 1,
+        'location': null, // Mặc định tự động xếp sẽ không có địa điểm
+        'dueDate': null
       });
 
-      // 3. Chèn vào bảng thực thi (Liên kết bằng ID vừa tạo)
       await db.insert('task_instances', {
         'id': tiId,
         'taskDefId': tdId,
@@ -551,7 +522,6 @@ class DatabaseHelper {
         'isCompleted': 0,
       });
 
-      // 4. Chèn Giờ vào bảng
       await db.insert('notifications', {
         'id': nId,
         'instanceId': tiId,
@@ -564,24 +534,18 @@ class DatabaseHelper {
       print("❌ LỖI NGẦM KHI XẾP LỊCH: $e");
     }
   }
-  // --- HÀM XÓA HỌC KỲ "BỌC THÉP" (CHỐNG CRASH) ---
+
   Future<void> deletePlan(dynamic planId) async {
     final db = await database;
     try {
-      // 1. Tìm tất cả các Môn học thuộc Học kỳ này
       final subjects = await db.query('subjects', where: 'planId = ?', whereArgs: [planId]);
 
-      // 2. Quét qua từng Môn học để dọn rác (Dùng try-catch để an toàn tuyệt đối)
       for (var sub in subjects) {
         dynamic subjectId = sub['id'];
 
-        // Cố gắng xóa lịch học (Nếu lỗi thì bỏ qua)
         try { await db.delete('timetable', where: 'subjectId = ?', whereArgs: [subjectId]); } catch(e){}
-
-        // Cố gắng xóa điểm số (Nếu lỗi thì bỏ qua)
         try { await db.delete('scores', where: 'subjectId = ?', whereArgs: [subjectId]); } catch(e){}
 
-        // Cố gắng xóa Task bài tập liên kết
         try {
           final taskDefs = await db.query('tasks_definition', where: 'subjectId = ?', whereArgs: [subjectId]);
           for(var td in taskDefs) {
@@ -591,10 +555,7 @@ class DatabaseHelper {
         } catch(e){}
       }
 
-      // 3. Xóa các Môn học (Chắc chắn phải xóa)
       await db.delete('subjects', where: 'planId = ?', whereArgs: [planId]);
-
-      // 4. Tiêu diệt Học kỳ
       await db.delete('plans', where: 'id = ?', whereArgs: [planId]);
 
       print("✅ Đã xóa sạch sẽ Học kỳ và các dữ liệu liên quan!");

@@ -368,21 +368,54 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           );
                           loadData();
                         },
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 0),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
                         title: Text(task.title,
                             style: TextStyle(
                                 decoration: task.isCompleted ? TextDecoration.lineThrough : null,
                                 color: task.isCompleted ? Colors.grey : Colors.black87,
                                 fontWeight: FontWeight.w600,
                                 fontSize: 15)),
-                        subtitle: Row(
+
+                        // [CẬP NHẬT] Khu vực hiển thị Thời gian, Địa điểm, và Deadline
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(Icons.access_time, size: 12, color: Colors.grey[500]),
-                            const SizedBox(width: 4),
-                            Text(task.time, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-                            const SizedBox(width: 10),
-                            if (task.subjectName != null)
-                              Expanded(child: Text(task.subjectName!, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: Colors.blue[400]))),
+                            const SizedBox(height: 6),
+                            // 1. Dòng hiển thị Thời gian & Môn học
+                            Row(
+                              children: [
+                                Icon(Icons.access_time, size: 14, color: Colors.grey[500]),
+                                const SizedBox(width: 4),
+                                Text(task.time, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                                const SizedBox(width: 10),
+                                if (task.subjectName != null)
+                                  Expanded(child: Text(task.subjectName!, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: Colors.blue[400]))),
+                              ],
+                            ),
+
+                            // 2. Dòng hiển thị Địa điểm (Chỉ hiện nếu có dữ liệu)
+                            if (task.location != null && task.location!.isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  Icon(Icons.location_on, size: 14, color: Colors.grey[500]),
+                                  const SizedBox(width: 4),
+                                  Expanded(child: Text(task.location!, style: TextStyle(color: Colors.grey[600], fontSize: 12), overflow: TextOverflow.ellipsis)),
+                                ],
+                              ),
+                            ],
+
+                            // 3. Dòng hiển thị Deadline (Chỉ hiện nếu có dữ liệu)
+                            if (task.dueDate != null && task.dueDate!.isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  Icon(Icons.flag, size: 14, color: Colors.red[400]),
+                                  const SizedBox(width: 4),
+                                  Text("Hạn chót: ${task.dueDate}", style: TextStyle(color: Colors.red[400], fontSize: 12, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            ],
                           ],
                         ),
                         trailing: Transform.scale(

@@ -8,6 +8,10 @@ class TaskItem {
   final int colorCode;
   final String time;
 
+  // [MỚI BỔ SUNG] 2 trường dữ liệu cho Địa điểm và Deadline
+  final String? location;
+  final String? dueDate;
+
   TaskItem({
     required this.id,
     required this.title,
@@ -16,6 +20,8 @@ class TaskItem {
     this.subjectName,
     required this.colorCode,
     required this.time,
+    this.location, // Bổ sung vào constructor
+    this.dueDate,  // Bổ sung vào constructor
   });
 
   factory TaskItem.fromMap(Map<String, dynamic> map) {
@@ -27,6 +33,10 @@ class TaskItem {
       subjectName: map['subjectName'],
       colorCode: map['subjectColor'] ?? map['categoryColor'] ?? 0xFF9E9E9E,
       time: map['remindAt'] ?? '08:00',
+
+      // [MỚI BỔ SUNG] Lấy dữ liệu từ Map do SQLite trả về
+      location: map['location'],
+      dueDate: map['dueDate'],
     );
   }
 }
@@ -38,6 +48,7 @@ class Score {
 
   Score({required this.subjectName, required this.scoreValue, required this.type});
 }
+
 class ScheduleItem {
   final String id;
   final String subjectName;
