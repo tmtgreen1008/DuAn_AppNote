@@ -1,18 +1,19 @@
 // File: lib/screens/dashboard_screen.dart
+import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:untitled3/screens/report_screen.dart';
+import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:image_picker/image_picker.dart';
 import '../services/database_helper.dart';
 import '../models/student_models.dart';
-import '../dataa/seed_data.dart'; // Đảm bảo đường dẫn này đúng với thư mục của bạn
-import 'calendar_screen.dart';
 import 'category_detail_screen.dart';
-import 'add_task_screen.dart';
 import 'task_detail_screen.dart';
-import 'plan_list_screen.dart';
-import 'brain_dump_screen.dart'; // [MỚI] Import màn hình Brain Dump
+import 'category_management_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key});
+  final String fullName;
+
+  const DashboardScreen({super.key, required this.fullName});
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -21,413 +22,361 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   final db = DatabaseHelper();
   List<TaskItem> tasks = [];
-  List<Score> scores = [];
+  List<Map<String, dynamic>> categories = [];
   bool loading = true;
+
+  // ==========================================
+  // [MỚI] BIẾN LƯU TRỮ PROFILE CÁ NHÂN
+  // ==========================================
+  late String _currentName;
+  String? _avatarPath; // Đường dẫn ảnh đại diện trên máy
+  bool _isNotificationEnabled = true; // Trạng thái thông báo
+
+  String _selectedFilter = 'Hôm nay';
+  final List<String> _filters = ['Tất cả', 'Hôm nay', 'Sắp tới', 'Đã trễ', 'Đã xong'];
 
   @override
   void initState() {
     super.initState();
+    _currentName = widget.fullName;
+    _loadUserProfile(); // Tải dữ liệu cá nhân ngay khi mở app
     loadData();
+  }
+
+  // [MỚI] Tải dữ liệu từ SharedPreferences
+  Future<void> _loadUserProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _currentName = prefs.getString('userName') ?? widget.fullName;
+      _avatarPath = prefs.getString('avatarPath');
+      _isNotificationEnabled = prefs.getBool('notifications') ?? true;
+    });
   }
 
   void loadData() async {
     try {
       await db.database;
-      final t = await db.getTasksForToday();
-      final s = await db.getScores();
-
-      // --- [ĐÃ TÍCH HỢP] SẮP XẾP TASK THEO THỜI GIAN TỪ SÁNG TỚI TỐI ---
+      final t = await db.getAllTasks();
+      final c = await db.getCategoriesWithTaskCount();
       t.sort((a, b) => a.time.compareTo(b.time));
-
-      if (mounted) {
-        setState(() {
-          tasks = t;
-          scores = s;
-          loading = false;
-        });
-      }
+      if (mounted) setState(() { tasks = t; categories = c; loading = false; });
     } catch (e) {
-      print("❌ Lỗi tải dữ liệu Dashboard: $e");
       if (mounted) setState(() => loading = false);
     }
   }
 
-  // --- HÀM TÍNH TỔNG GPA (Hệ 4.0) ---
-  String _calculateGPA() {
-    if (scores.isEmpty) return "0.0";
-    double total = 0;
-    for (var s in scores) {
-      double s10 = s.scoreValue;
-      if (s10 >= 8.5) {
-        total += 4.0;
-      } else if (s10 >= 7.0) {
-        total += 3.0;
-      } else if (s10 >= 5.5) {
-        total += 2.0;
-      } else if (s10 >= 4.0) {
-        total += 1.0;
-      }
-    }
-    return (total / scores.length).toStringAsFixed(2);
+  List<TaskItem> get _filteredTasks {
+    DateTime now = DateTime.now();
+    DateTime today = DateTime(now.year, now.month, now.day);
+    return tasks.where((task) {
+      DateTime taskDate;
+      try { taskDate = DateFormat('yyyy-MM-dd').parse(task.date); } catch (e) { taskDate = today; }
+      DateTime tDateOnly = DateTime(taskDate.year, taskDate.month, taskDate.day);
+      if (_selectedFilter == 'Đã xong') return task.isCompleted;
+      if (task.isCompleted) return false;
+      if (_selectedFilter == 'Tất cả') return true;
+      if (_selectedFilter == 'Hôm nay') return tDateOnly.isAtSameMomentAs(today);
+      if (_selectedFilter == 'Sắp tới') return tDateOnly.isAfter(today);
+      if (_selectedFilter == 'Đã trễ') return tDateOnly.isBefore(today);
+      return true;
+    }).toList();
   }
 
-  // --- HÀM MỞ BẢNG NHẬP ĐIỂM ---
-  void _showAddScoreBottomSheet(BuildContext context) async {
-    final subjects = await DatabaseHelper().getSubjectsForActivePlan();
-
-    if (subjects.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Chưa có môn học nào trong kỳ này!"), backgroundColor: Colors.orange),
-        );
-      }
-      return;
+  Map<String, int> _getFilterStats() {
+    DateTime now = DateTime.now();
+    DateTime today = DateTime(now.year, now.month, now.day);
+    int total = 0; int completed = 0;
+    for (var task in tasks) {
+      DateTime tDate;
+      try { tDate = DateFormat('yyyy-MM-dd').parse(task.date); } catch (e) { tDate = today; }
+      DateTime tDateOnly = DateTime(tDate.year, tDate.month, tDate.day);
+      bool isMatchDate = false;
+      if (_selectedFilter == 'Tất cả' || _selectedFilter == 'Đã xong') isMatchDate = true;
+      else if (_selectedFilter == 'Hôm nay') isMatchDate = tDateOnly.isAtSameMomentAs(today);
+      else if (_selectedFilter == 'Sắp tới') isMatchDate = tDateOnly.isAfter(today);
+      else if (_selectedFilter == 'Đã trễ') isMatchDate = tDateOnly.isBefore(today);
+      if (isMatchDate) { total++; if (task.isCompleted) completed++; }
     }
+    return {'total': total, 'completed': completed};
+  }
 
-    if (!mounted) return;
+  // ==========================================
+  // [CẬP NHẬT] HỘP THOẠI QUẢN LÝ PROFILE
+  // ==========================================
+  void _showEditProfileDialog() {
+    final nameController = TextEditingController(text: _currentName);
+    String? tempAvatarPath = _avatarPath;
+    bool tempNotif = _isNotificationEnabled;
 
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (context) {
-        return _AddScoreForm(
-          subjects: subjects,
-          onSaved: () => loadData(), // Load lại data sau khi lưu điểm thành công
-        );
-      },
+    showDialog(
+        context: context,
+        builder: (context) {
+          return StatefulBuilder(
+              builder: (context, setDialogState) {
+                return AlertDialog(
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  title: const Text("Thiết lập cá nhân", style: TextStyle(fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // 1. Khu vực đổi Ảnh đại diện
+                      Stack(
+                        alignment: Alignment.bottomRight,
+                        children: [
+                          CircleAvatar(
+                            radius: 45,
+                            backgroundColor: Colors.purple[100],
+                            backgroundImage: tempAvatarPath != null ? FileImage(File(tempAvatarPath!)) : null,
+                            child: tempAvatarPath == null
+                                ? Text(
+                                nameController.text.isNotEmpty ? nameController.text[0].toUpperCase() : 'U',
+                                style: TextStyle(fontSize: 35, color: Colors.purple[800], fontWeight: FontWeight.bold)
+                            )
+                                : null,
+                          ),
+                          GestureDetector(
+                            onTap: () async {
+                              try {
+                                final ImagePicker picker = ImagePicker();
+                                final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+                                if (image != null) {
+                                  setDialogState(() => tempAvatarPath = image.path);
+                                }
+                              } catch (e) {
+                                print("❌ Lỗi mở thư viện ảnh: $e");
+                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Không thể mở thư viện ảnh!"), backgroundColor: Colors.red));
+                              }
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                  color: Colors.blue,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white, width: 2)
+                              ),
+                              child: const Icon(Icons.camera_alt, size: 18, color: Colors.white),
+                            ),
+                          )
+                        ],
+                      ),
+                      const SizedBox(height: 25),
+
+                      // 2. Khu vực đổi Tên
+                      TextField(
+                        controller: nameController,
+                        onChanged: (val) {
+                          // Gọi setDialogState để cái chữ cái ở Avatar thay đổi ngay lập tức khi gõ
+                          setDialogState(() {});
+                        },
+                        decoration: InputDecoration(
+                          labelText: "Tên hiển thị",
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(15)),
+                          prefixIcon: const Icon(Icons.person_outline),
+                        ),
+                      ),
+                      const SizedBox(height: 15),
+
+                      // 3. Khu vực Cài đặt thông báo
+                      Container(
+                        decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(15)),
+                        child: SwitchListTile(
+                          title: const Text("Thông báo nhắc nhở", style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                          activeColor: Colors.blue,
+                          value: tempNotif,
+                          onChanged: (bool value) {
+                            setDialogState(() => tempNotif = value);
+                          },
+                        ),
+                      )
+                    ],
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text("Hủy", style: TextStyle(color: Colors.grey)),
+                    ),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                      onPressed: () async {
+                        // Kiểm tra nếu để trống tên
+                        if (nameController.text.trim().isEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Tên hiển thị không được để trống!"), backgroundColor: Colors.orange));
+                          return;
+                        }
+
+                        try {
+                          // Lưu vĩnh viễn vào SharedPreferences
+                          final prefs = await SharedPreferences.getInstance();
+                          await prefs.setString('userName', nameController.text.trim());
+                          await prefs.setBool('notifications', tempNotif);
+                          if (tempAvatarPath != null) {
+                            await prefs.setString('avatarPath', tempAvatarPath!);
+                          }
+
+                          // Cập nhật lại giao diện chính (Sẽ làm chữ Xin chào đổi ngay lập tức)
+                          setState(() {
+                            _currentName = nameController.text.trim();
+                            _isNotificationEnabled = tempNotif;
+                            _avatarPath = tempAvatarPath;
+                          });
+
+                          if (context.mounted) {
+                            Navigator.pop(context);
+                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Đã lưu thiết lập thành công!"), backgroundColor: Colors.green));
+                          }
+                        } catch (e) {
+                          print("❌ Lỗi lưu dữ liệu: $e");
+                        }
+                      },
+                      child: const Text("Lưu", style: TextStyle(color: Colors.white)),
+                    )
+                  ],
+                );
+              }
+          );
+        }
+    );
+  }
+
+  void _showAddCategoryDialog() {
+    final nameController = TextEditingController();
+    int selectedColor = Colors.blue.value;
+    final List<Color> colorOptions = [Colors.blue, Colors.orange, Colors.green, Colors.purple, Colors.red, Colors.teal];
+
+    showDialog(
+        context: context,
+        builder: (context) {
+          return StatefulBuilder(
+              builder: (context, setDialogState) {
+                return AlertDialog(
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  title: const Text("Tạo danh mục mới", style: TextStyle(fontWeight: FontWeight.bold)),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      TextField(controller: nameController, decoration: InputDecoration(labelText: "Tên danh mục", hintText: "VD: Học Tiếng Anh", border: OutlineInputBorder(borderRadius: BorderRadius.circular(15)))), const SizedBox(height: 20), const Text("Chọn màu sắc:", style: TextStyle(fontWeight: FontWeight.w600)), const SizedBox(height: 10),
+                      Wrap(spacing: 10, children: colorOptions.map((color) => GestureDetector(onTap: () => setDialogState(() => selectedColor = color.value), child: CircleAvatar(backgroundColor: color.withOpacity(0.2), radius: 18, child: CircleAvatar(backgroundColor: color, radius: 14, child: selectedColor == color.value ? const Icon(Icons.check, size: 16, color: Colors.white) : null)))).toList())
+                    ],
+                  ),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.pop(context), child: const Text("Hủy", style: TextStyle(color: Colors.grey))),
+                    ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), onPressed: () async { if (nameController.text.trim().isNotEmpty) { await db.insertCategory(nameController.text.trim(), selectedColor); if (mounted) { Navigator.pop(context); loadData(); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Đã thêm danh mục mới!"))); } } }, child: const Text("Tạo mới", style: TextStyle(color: Colors.white)))
+                  ],
+                );
+              }
+          );
+        }
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final displayTasks = _filteredTasks;
+    final stats = _getFilterStats();
+
     return Scaffold(
       backgroundColor: Colors.grey[50],
-
-      // ==========================================
-      // 1. NÚT THÊM VIỆC & BRAIN DUMP (FAB) ĐÃ CẬP NHẬT
-      // ==========================================
-      floatingActionButton: Column(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          // NÚT GHI CHÚ NHANH (MỚI)
-          FloatingActionButton(
-            heroTag: "dump",
-            onPressed: () async {
-              final res = await Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const BrainDumpScreen())
-              );
-              if (res == true) loadData(); // Load lại lịch nếu có tự động xếp việc
-            },
-            backgroundColor: Colors.orange,
-            mini: true,
-            tooltip: "Ghi chú nhanh",
-            child: const Icon(Icons.note_alt, color: Colors.white),
-          ),
-          const SizedBox(height: 10),
-          // NÚT THÊM VIỆC CŨ
-          FloatingActionButton.extended(
-            heroTag: "add",
-            onPressed: () async {
-              final result = await Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const AddTaskScreen()),
-              );
-              if (result == true) loadData();
-            },
-            backgroundColor: Colors.blue,
-            icon: const Icon(Icons.add, color: Colors.white),
-            label: const Text("Thêm việc", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-          ),
-        ],
-      ),
-
-      // 2. APP BAR
       appBar: AppBar(
-        elevation: 0,
-        backgroundColor: Colors.white,
+        elevation: 0, backgroundColor: Colors.white,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text("Xin chào, Student! 👋", style: TextStyle(color: Colors.grey[600], fontSize: 14)),
-            const Text("Dashboard", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 20)),
+            Text("Xin chào, $_currentName! 👋", style: TextStyle(color: Colors.grey[600], fontSize: 14)),
+            const Text("Quản lý công việc cá nhân", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold, fontSize: 20)),
           ],
         ),
         actions: [
-          // --- NÚT QUẢN LÝ HỌC KỲ ---
-          Container(
-            margin: const EdgeInsets.only(right: 10),
-            decoration: BoxDecoration(color: Colors.orange[50], borderRadius: BorderRadius.circular(10)),
-            child: IconButton(
-              icon: const Icon(Icons.folder_special, color: Colors.orange),
-              tooltip: "Quản lý Học kỳ",
-              onPressed: () async {
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const PlanListScreen()),
-                );
-                loadData();
-              },
+          Padding(
+            padding: const EdgeInsets.only(right: 20),
+            child: GestureDetector(
+              onTap: _showEditProfileDialog,
+              child: CircleAvatar(
+                backgroundColor: Colors.purple[100],
+                backgroundImage: _avatarPath != null ? FileImage(File(_avatarPath!)) : null, // Hiện ảnh nếu có
+                child: _avatarPath == null
+                    ? Text(_currentName.isNotEmpty ? _currentName[0].toUpperCase() : 'U', style: TextStyle(color: Colors.purple[800], fontWeight: FontWeight.bold))
+                    : null,
+              ),
             ),
           ),
-
-          // --- NÚT XEM BÁO CÁO THỐNG KÊ ---
-          Container(
-            margin: const EdgeInsets.only(right: 10),
-            decoration: BoxDecoration(color: Colors.green[50], borderRadius: BorderRadius.circular(10)),
-            child: IconButton(
-              icon: const Icon(Icons.bar_chart, color: Colors.green),
-              tooltip: "Xem Báo cáo Thống kê",
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const ReportScreen()),
-                ).then((_) => loadData());
-              },
-            ),
-          ),
-
-          // --- NÚT XEM LỊCH ---
-          Container(
-            margin: const EdgeInsets.only(right: 15),
-            decoration: BoxDecoration(color: Colors.blue[50], borderRadius: BorderRadius.circular(10)),
-            child: IconButton(
-              icon: const Icon(Icons.calendar_month, color: Colors.blue),
-              tooltip: "Xem Thời Khóa Biểu",
-              onPressed: () async {
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const CalendarScreen()),
-                );
-                loadData();
-              },
-            ),
-          )
         ],
       ),
-
-      // 3. BODY
-      body: loading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-        onRefresh: () async {
-          loadData();
-        },
+      body: loading ? const Center(child: CircularProgressIndicator()) : RefreshIndicator(
+        onRefresh: () async => loadData(),
         child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(20),
+          physics: const AlwaysScrollableScrollPhysics(), padding: const EdgeInsets.all(20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // A. DANH MỤC
-              const Text("🗂️ Danh mục (Ấn để xem)", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              GestureDetector(
+                onTap: () async { await Navigator.push(context, MaterialPageRoute(builder: (context) => const CategoryManagementScreen())); loadData(); },
+                child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text("🗂️ Danh mục", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)), Row(children: [Text("Quản lý", style: TextStyle(fontSize: 13, color: Colors.grey[600], fontWeight: FontWeight.w600)), const SizedBox(width: 4), Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey[500])])]),
+              ),
               const SizedBox(height: 15),
               SizedBox(
-                height: 45,
+                height: 55,
                 child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  children: SeedData.categories.map((cat) {
-                    return GestureDetector(
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => CategoryDetailScreen(
-                              categoryId: cat['id'],
-                              categoryName: cat['name'],
-                              colorCode: cat['colorCode'],
-                            ),
-                          ),
-                        ).then((_) => loadData());
-                      },
-                      child: Container(
-                        margin: const EdgeInsets.only(right: 10),
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: Color(cat['colorCode']).withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(25),
-                          border: Border.all(color: Color(cat['colorCode']), width: 1),
-                        ),
-                        child: Text(
-                          cat['name'],
-                          style: TextStyle(color: Color(cat['colorCode']), fontWeight: FontWeight.bold, fontSize: 13),
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ),
-
-              const SizedBox(height: 25),
-
-              // B. BẢNG ĐIỂM
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      const Text("📊 Kết quả học tập", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                      IconButton(
-                        icon: const Icon(Icons.add_circle, color: Colors.blue, size: 24),
-                        onPressed: () => _showAddScoreBottomSheet(context),
-                        tooltip: "Nhập điểm mới",
-                      ),
-                    ],
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(color: Colors.amber[100], borderRadius: BorderRadius.circular(10)),
-                    child: Text(
-                        "GPA: ${_calculateGPA()}",
-                        style: const TextStyle(color: Colors.deepOrange, fontWeight: FontWeight.bold, fontSize: 13)
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              SizedBox(
-                height: 130,
-                child: scores.isEmpty
-                    ? const Center(child: Text("Chưa có điểm số", style: TextStyle(color: Colors.grey)))
-                    : ListView.builder(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: scores.length,
-                  itemBuilder: (ctx, i) => Container(
-                    width: 140,
-                    margin: const EdgeInsets.only(right: 15, bottom: 5),
-                    padding: const EdgeInsets.all(15),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(15),
-                      boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 5))],
-                    ),
-                    child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                      Text(scores[i].subjectName, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: Colors.grey[600], fontSize: 12, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 8),
-                      Text("${scores[i].scoreValue}", style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.blue)),
-                      const SizedBox(height: 4),
-                      Text(scores[i].type, style: const TextStyle(fontSize: 11, fontStyle: FontStyle.italic, color: Colors.orange)),
-                    ]),
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 25),
-
-              // C. DANH SÁCH CÔNG VIỆC
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text("📝 Nhiệm vụ hôm nay", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  Text("${tasks.where((t) => t.isCompleted).length}/${tasks.length} Xong", style: TextStyle(color: Colors.grey[600], fontSize: 12)),
-                ],
-              ),
-              const SizedBox(height: 10),
-              tasks.isEmpty
-                  ? const Center(child: Padding(padding: EdgeInsets.all(20), child: Text("Không có công việc nào!")))
-                  : ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: tasks.length,
-                itemBuilder: (ctx, i) {
-                  final task = tasks[i];
-                  return Dismissible(
-                    key: Key(task.id),
-                    direction: DismissDirection.endToStart,
-                    background: Container(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      decoration: BoxDecoration(color: Colors.red[100], borderRadius: BorderRadius.circular(12)),
-                      alignment: Alignment.centerRight,
-                      padding: const EdgeInsets.only(right: 20),
-                      child: const Icon(Icons.delete, color: Colors.red),
-                    ),
-                    onDismissed: (direction) async {
-                      await db.deleteTask(task.id);
-                      setState(() {
-                        tasks.removeAt(i);
-                      });
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Đã xóa công việc!")));
-                    },
-                    child: Container(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border(left: BorderSide(color: Color(task.colorCode), width: 4)),
-                        boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.05), blurRadius: 5)],
-                      ),
-                      child: ListTile(
-                        onTap: () async {
-                          await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => TaskDetailScreen(taskId: task.id),
-                            ),
-                          );
-                          loadData();
-                        },
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
-                        title: Text(task.title,
-                            style: TextStyle(
-                                decoration: task.isCompleted ? TextDecoration.lineThrough : null,
-                                color: task.isCompleted ? Colors.grey : Colors.black87,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 15)),
-
-                        // [CẬP NHẬT] Khu vực hiển thị Thời gian, Địa điểm, và Deadline
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                  scrollDirection: Axis.horizontal, clipBehavior: Clip.none,
+                  children: [
+                    ...categories.map((cat) {
+                      Color catColor = Color(cat['colorCode']);
+                      return Container(
+                        margin: const EdgeInsets.only(right: 15, top: 6),
+                        child: Stack(
+                          clipBehavior: Clip.none,
                           children: [
-                            const SizedBox(height: 6),
-                            // 1. Dòng hiển thị Thời gian & Môn học
-                            Row(
-                              children: [
-                                Icon(Icons.access_time, size: 14, color: Colors.grey[500]),
-                                const SizedBox(width: 4),
-                                Text(task.time, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-                                const SizedBox(width: 10),
-                                if (task.subjectName != null)
-                                  Expanded(child: Text(task.subjectName!, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: Colors.blue[400]))),
-                              ],
+                            GestureDetector(
+                              onTap: () { Navigator.push(context, MaterialPageRoute(builder: (context) => CategoryDetailScreen(categoryId: cat['id'].toString(), categoryName: cat['name'], colorCode: cat['colorCode']))).then((_) => loadData()); },
+                              child: Container(padding: const EdgeInsets.symmetric(horizontal: 20), alignment: Alignment.center, decoration: BoxDecoration(color: catColor.withOpacity(0.08), borderRadius: BorderRadius.circular(30), border: Border.all(color: catColor.withOpacity(0.5), width: 1)), child: Text(cat['name'], style: TextStyle(color: catColor, fontWeight: FontWeight.w700, fontSize: 13))),
                             ),
-
-                            // 2. Dòng hiển thị Địa điểm (Chỉ hiện nếu có dữ liệu)
-                            if (task.location != null && task.location!.isNotEmpty) ...[
-                              const SizedBox(height: 4),
-                              Row(
-                                children: [
-                                  Icon(Icons.location_on, size: 14, color: Colors.grey[500]),
-                                  const SizedBox(width: 4),
-                                  Expanded(child: Text(task.location!, style: TextStyle(color: Colors.grey[600], fontSize: 12), overflow: TextOverflow.ellipsis)),
-                                ],
-                              ),
-                            ],
-
-                            // 3. Dòng hiển thị Deadline (Chỉ hiện nếu có dữ liệu)
-                            if (task.dueDate != null && task.dueDate!.isNotEmpty) ...[
-                              const SizedBox(height: 4),
-                              Row(
-                                children: [
-                                  Icon(Icons.flag, size: 14, color: Colors.red[400]),
-                                  const SizedBox(width: 4),
-                                  Text("Hạn chót: ${task.dueDate}", style: TextStyle(color: Colors.red[400], fontSize: 12, fontWeight: FontWeight.bold)),
-                                ],
-                              ),
-                            ],
+                            if (cat['taskCount'] > 0)
+                              Positioned(top: -6, right: -6, child: Container(padding: const EdgeInsets.all(4), decoration: BoxDecoration(color: Colors.redAccent, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2)), constraints: const BoxConstraints(minWidth: 22, minHeight: 22), child: Center(child: Text('${cat['taskCount']}', style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold))))),
                           ],
                         ),
-                        trailing: Transform.scale(
-                          scale: 1.1,
-                          child: Checkbox(
-                              activeColor: Color(task.colorCode),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                              value: task.isCompleted,
-                              onChanged: (v) async {
-                                await db.toggleTask(task.id, task.isCompleted);
-                                loadData();
-                              }),
+                      );
+                    }),
+                    Container(margin: const EdgeInsets.only(top: 6), child: GestureDetector(onTap: _showAddCategoryDialog, child: Container(padding: const EdgeInsets.symmetric(horizontal: 20), alignment: Alignment.center, decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(30)), child: Row(children: [Icon(Icons.add, size: 16, color: Colors.grey[700]), const SizedBox(width: 4), Text("Thêm", style: TextStyle(color: Colors.grey[700], fontWeight: FontWeight.bold, fontSize: 13))]))))
+                  ],
+                ),
+              ),
+              const SizedBox(height: 30),
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text("📝 Danh sách nhiệm vụ", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)), Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(12)), child: Text("${stats['completed']}/${stats['total']} Xong", style: TextStyle(color: Colors.grey[700], fontSize: 12, fontWeight: FontWeight.bold)))]),
+              const SizedBox(height: 15),
+              SizedBox(height: 38, child: ListView.builder(scrollDirection: Axis.horizontal, itemCount: _filters.length, itemBuilder: (context, index) { bool isSelected = _selectedFilter == _filters[index]; return GestureDetector(onTap: () => setState(() => _selectedFilter = _filters[index]), child: Container(margin: const EdgeInsets.only(right: 10), padding: const EdgeInsets.symmetric(horizontal: 18), alignment: Alignment.center, decoration: BoxDecoration(color: isSelected ? (_filters[index] == 'Đã xong' ? Colors.green : Colors.blue) : Colors.grey[200], borderRadius: BorderRadius.circular(20)), child: Text(_filters[index], style: TextStyle(color: isSelected ? Colors.white : Colors.grey[700], fontWeight: isSelected ? FontWeight.bold : FontWeight.w600, fontSize: 13)))); })),
+              const SizedBox(height: 20),
+              displayTasks.isEmpty
+                  ? Center(child: Padding(padding: const EdgeInsets.symmetric(vertical: 40), child: Column(children: [Container(padding: const EdgeInsets.all(20), decoration: BoxDecoration(color: Colors.green.withOpacity(0.1), shape: BoxShape.circle), child: Icon(_selectedFilter == 'Đã xong' ? Icons.check_circle_outline : Icons.done_all, size: 50, color: Colors.green.withOpacity(0.8))), const SizedBox(height: 15), Text(_selectedFilter == 'Đã trễ' ? "Thật xuất sắc!" : _selectedFilter == 'Đã xong' ? "Chưa có thành tựu nào" : "Trống trải quá!", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)), const SizedBox(height: 5), Text(_selectedFilter == 'Đã trễ' ? "Bạn không có deadline nào bị trễ." : _selectedFilter == 'Đã xong' ? "Hãy hoàn thành một vài việc nhé." : "Không có công việc nào trong mục này.", style: TextStyle(color: Colors.grey[500], fontSize: 14))])) )
+                  : ListView.builder(
+                shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), itemCount: displayTasks.length,
+                itemBuilder: (ctx, i) {
+                  final task = displayTasks[i];
+                  return Dismissible(
+                    key: Key(task.id), direction: DismissDirection.endToStart,
+                    background: Container(margin: const EdgeInsets.only(bottom: 16), decoration: BoxDecoration(color: Colors.red.shade400, borderRadius: BorderRadius.circular(20)), alignment: Alignment.centerRight, padding: const EdgeInsets.only(right: 25), child: const Icon(Icons.delete_sweep, color: Colors.white, size: 28)),
+                    onDismissed: (direction) async { await db.deleteTask(task.id); setState(() => tasks.removeWhere((t) => t.id == task.id)); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Đã xóa công việc!"))); loadData(); },
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(color: task.isCompleted ? Colors.grey.shade50 : Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: task.isCompleted ? Colors.grey.shade200 : Colors.transparent, width: 1), boxShadow: task.isCompleted ? [] : [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 24, spreadRadius: 0, offset: const Offset(0, 8))]),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(20),
+                        child: Container(
+                          decoration: BoxDecoration(border: Border(left: BorderSide(color: task.isCompleted ? Colors.grey.shade300 : Color(task.colorCode), width: 6))),
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            onTap: () async { await Navigator.push(context, MaterialPageRoute(builder: (context) => TaskDetailScreen(taskId: task.id))); loadData(); },
+                            title: Text(task.title, style: TextStyle(decoration: task.isCompleted ? TextDecoration.lineThrough : null, color: task.isCompleted ? Colors.grey.shade500 : Colors.black87, fontWeight: FontWeight.w700, fontSize: 16)),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const SizedBox(height: 8),
+                                Row(children: [Icon(Icons.access_time_rounded, size: 14, color: Colors.grey[500]), const SizedBox(width: 4), Text(task.time, style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.w500)), const SizedBox(width: 12), if (task.subjectName != null) Expanded(child: Text(task.subjectName!, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: Colors.blue[600], fontWeight: FontWeight.w600)))]),
+                                if (task.location != null && task.location!.isNotEmpty) ...[const SizedBox(height: 6), Row(children: [Icon(Icons.location_on_rounded, size: 14, color: Colors.grey[500]), const SizedBox(width: 4), Expanded(child: Text(task.location!, style: TextStyle(color: Colors.grey[600], fontSize: 12), overflow: TextOverflow.ellipsis))])],
+                                if (task.dueDate != null && task.dueDate!.isNotEmpty) ...[const SizedBox(height: 6), Row(children: [Icon(Icons.flag_rounded, size: 14, color: Colors.red[400]), const SizedBox(width: 4), Text("Hạn chót: ${task.dueDate}", style: TextStyle(color: Colors.red[500], fontSize: 12, fontWeight: FontWeight.bold))])],
+                                if (task.totalSubtasks > 0) ...[const SizedBox(height: 12), Row(children: [Icon(Icons.account_tree_outlined, size: 14, color: Colors.blue[400]), const SizedBox(width: 4), Text("${task.completedSubtasks}/${task.totalSubtasks} tiến độ", style: TextStyle(fontSize: 12, color: Colors.blue[600], fontWeight: FontWeight.bold)), const SizedBox(width: 8), Expanded(child: ClipRRect(borderRadius: BorderRadius.circular(10), child: LinearProgressIndicator(value: task.totalSubtasks > 0 ? task.completedSubtasks / task.totalSubtasks : 0, minHeight: 4, backgroundColor: Colors.blue[100], valueColor: AlwaysStoppedAnimation<Color>(Colors.blue[400]!)))), const SizedBox(width: 10)])],
+                              ],
+                            ),
+                            trailing: Transform.scale(scale: 1.2, child: Checkbox(activeColor: Color(task.colorCode), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)), side: BorderSide(color: Colors.grey.shade400, width: 1.5), value: task.isCompleted, onChanged: (v) async { await db.toggleTask(task.id, task.isCompleted); loadData(); })),
+                          ),
                         ),
                       ),
                     ),
@@ -437,110 +386,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-// ==========================================
-// WIDGET FORM NHẬP ĐIỂM BÊN DƯỚI (BOTTOM SHEET)
-// ==========================================
-class _AddScoreForm extends StatefulWidget {
-  final List<Map<String, dynamic>> subjects;
-  final VoidCallback onSaved;
-
-  const _AddScoreForm({required this.subjects, required this.onSaved});
-
-  @override
-  State<_AddScoreForm> createState() => _AddScoreFormState();
-}
-
-class _AddScoreFormState extends State<_AddScoreForm> {
-  String? _selectedSubjectId;
-  String _selectedType = 'Cuối kỳ';
-  final _scoreController = TextEditingController();
-
-  final List<String> _scoreTypes = ['Chuyên cần', 'Giữa kỳ', 'Thực hành', 'Cuối kỳ', 'Đồ án'];
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.subjects.isNotEmpty) {
-      _selectedSubjectId = widget.subjects.first['id'] as String;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-        left: 20, right: 20, top: 20,
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text("Nhập kết quả học tập", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
-          const SizedBox(height: 20),
-
-          // Chọn môn học
-          DropdownButtonFormField<String>(
-            decoration: InputDecoration(labelText: "Môn học", border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
-            value: _selectedSubjectId,
-            items: widget.subjects.map((sub) => DropdownMenuItem<String>(
-              value: sub['id'] as String,
-              child: Text(sub['name'] as String),
-            )).toList(),
-            onChanged: (val) => setState(() => _selectedSubjectId = val),
-          ),
-          const SizedBox(height: 15),
-
-          // Chọn loại điểm
-          DropdownButtonFormField<String>(
-            decoration: InputDecoration(labelText: "Loại điểm", border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
-            value: _selectedType,
-            items: _scoreTypes.map((type) => DropdownMenuItem(value: type, child: Text(type))).toList(),
-            onChanged: (val) => setState(() => _selectedType = val!),
-          ),
-          const SizedBox(height: 15),
-
-          // Nhập số điểm
-          TextField(
-            controller: _scoreController,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: InputDecoration(
-              labelText: "Số điểm (Hệ 10)",
-              hintText: "Ví dụ: 8.5",
-              prefixIcon: const Icon(Icons.score),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-          ),
-          const SizedBox(height: 25),
-
-          // Nút Lưu
-          SizedBox(
-            height: 50,
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-              onPressed: () async {
-                double? score = double.tryParse(_scoreController.text.replaceAll(',', '.'));
-                if (score != null && score >= 0 && score <= 10 && _selectedSubjectId != null) {
-                  await DatabaseHelper().insertOrUpdateScore(_selectedSubjectId!, _selectedType, score);
-                  if (context.mounted) {
-                    Navigator.pop(context);
-                    widget.onSaved(); // Load lại Dashboard
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Đã lưu điểm thành công!"), backgroundColor: Colors.green));
-                  }
-                } else {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Vui lòng nhập điểm hợp lệ (0-10)"), backgroundColor: Colors.red));
-                }
-              },
-              child: const Text("Lưu điểm", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-            ),
-          ),
-          const SizedBox(height: 20),
-        ],
       ),
     );
   }

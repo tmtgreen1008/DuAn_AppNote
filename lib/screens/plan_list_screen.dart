@@ -139,7 +139,7 @@ class _PlanListScreenState extends State<PlanListScreen> {
         title: const Text("Quản lý Học kỳ", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
         elevation: 0,
-        leading: const BackButton(color: Colors.black),
+        //leading: const BackButton(color: Colors.black),
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _showAddPlanBottomSheet,

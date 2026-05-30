@@ -126,7 +126,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         title: const Text("Lịch Tổng Hợp", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
         elevation: 0,
-        leading: const BackButton(color: Colors.black),
+        //leading: const BackButton(color: Colors.black),
         actions: [
           // NÚT "HÔM NAY" GÓC TRÊN CÙNG
           TextButton.icon(
@@ -177,22 +177,22 @@ class _CalendarScreenState extends State<CalendarScreen> {
               // VẼ CHẤM MÀU
               calendarBuilders: CalendarBuilders(
                 markerBuilder: (context, date, events) {
-                  if (events.isEmpty) return const SizedBox();
-                  return Positioned(
-                    bottom: 6,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: events.map((event) {
-                        Color color = event as Color;
-                        return Container(
-                          margin: const EdgeInsets.symmetric(horizontal: 1.5),
-                          width: 6,
-                          height: 6,
-                          decoration: BoxDecoration(shape: BoxShape.circle, color: color),
-                        );
-                      }).toList(),
-                    ),
-                  );
+                  // NẾU NGÀY HÔM ĐÓ CÓ CÔNG VIỆC (events không rỗng)
+                  if (events.isNotEmpty) {
+                    return Positioned(
+                      bottom: 6, // Cách mép dưới của ô ngày 6 pixel
+                      child: Container(
+                        width: 6, // Kích thước chấm nhỏ gọn
+                        height: 6,
+                        decoration: const BoxDecoration(
+                          color: Colors.blue, // Thay bằng màu chủ đạo của app bạn (VD: Colors.purpleAccent)
+                          shape: BoxShape.circle, // Bo tròn thành dấu chấm
+                        ),
+                      ),
+                    );
+                  }
+                  // NẾU KHÔNG CÓ VIỆC thì không vẽ gì cả
+                  return const SizedBox.shrink();
                 },
               ),
 

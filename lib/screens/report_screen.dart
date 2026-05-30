@@ -54,7 +54,7 @@ class _ReportScreenState extends State<ReportScreen> {
         title: const Text("Báo cáo Thống kê", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
         backgroundColor: Colors.white,
         elevation: 0,
-        leading: const BackButton(color: Colors.black),
+        //leading: const BackButton(color: Colors.black),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())

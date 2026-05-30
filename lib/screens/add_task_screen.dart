@@ -2,7 +2,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../services/database_helper.dart';
-import '../dataa/seed_data.dart'; // Để lấy danh sách Category cho Dropdown
 
 class AddTaskScreen extends StatefulWidget {
   const AddTaskScreen({super.key});
@@ -14,16 +13,41 @@ class AddTaskScreen extends StatefulWidget {
 class _AddTaskScreenState extends State<AddTaskScreen> {
   final _titleController = TextEditingController();
   final _locationController = TextEditingController();
+  final db = DatabaseHelper(); // Bổ sung tham chiếu DatabaseHelper
 
   // Biến cho Ngày thực hiện & Giờ nhắc
   DateTime _selectedDate = DateTime.now();
   TimeOfDay _selectedTime = TimeOfDay.now();
 
-  // [MỚI] Biến cho Hạn chót (Có thể null vì là tùy chọn)
+  // Biến cho Hạn chót (Có thể null vì là tùy chọn)
   DateTime? _selectedDueDate;
   TimeOfDay? _selectedDueTime;
 
-  String _selectedCategoryId = SeedData.categories[0]['id'];
+  // [CẬP NHẬT] Các biến để quản lý danh mục động
+  List<Map<String, dynamic>> categories = [];
+  String? _selectedCategoryId;
+  bool isLoading = true; // Trạng thái đang tải dữ liệu
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCategories(); // Gọi hàm tải danh mục khi mở màn hình
+  }
+
+  // [MỚI] Hàm tải danh mục từ Database
+  void _loadCategories() async {
+    final data = await db.getCategoriesWithTaskCount();
+    if (mounted) {
+      setState(() {
+        categories = data;
+        // Đặt danh mục mặc định là danh mục đầu tiên (nếu có)
+        if (categories.isNotEmpty) {
+          _selectedCategoryId = categories[0]['id'].toString();
+        }
+        isLoading = false;
+      });
+    }
+  }
 
   // Hàm chọn Ngày & Giờ thực hiện
   void _pickDate() async {
@@ -41,7 +65,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     if (picked != null) setState(() => _selectedTime = picked);
   }
 
-  // [MỚI] Hàm chọn Ngày & Giờ cho Deadline
+  // Hàm chọn Ngày & Giờ cho Deadline
   void _pickDeadline() async {
     // 1. Chọn ngày trước
     final pickedDate = await showDatePicker(
@@ -70,7 +94,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     }
   }
 
-  // [MỚI] Hàm xóa Deadline
+  // Hàm xóa Deadline
   void _clearDeadline() {
     setState(() {
       _selectedDueDate = null;
@@ -82,6 +106,12 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   void _saveTask() async {
     if (_titleController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Vui lòng nhập tên công việc!")));
+      return;
+    }
+
+    // [CẬP NHẬT] Kiểm tra xem đã chọn danh mục chưa
+    if (_selectedCategoryId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Vui lòng chọn hoặc tạo danh mục trước!")));
       return;
     }
 
@@ -104,7 +134,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       _titleController.text.trim(),
       dateStr,
       timeStr,
-      _selectedCategoryId,
+      _selectedCategoryId!, // Truyền ID danh mục đã chọn
       location: locationData,
       dueDate: dueDateData,
     );
@@ -132,7 +162,9 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         foregroundColor: Colors.black,
         elevation: 0,
       ),
-      body: SingleChildScrollView(
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator()) // Hiển thị vòng xoay khi đang tải danh mục
+          : SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -152,7 +184,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
             ),
             const SizedBox(height: 20),
 
-            // 2. CHỌN DANH MỤC
+            // 2. CHỌN DANH MỤC (ĐÃ CẬP NHẬT DÙNG DỮ LIỆU ĐỘNG)
             const Text("Danh mục", style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
             Container(
@@ -161,14 +193,19 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                 color: Colors.grey[100],
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: DropdownButtonHideUnderline(
+              child: categories.isEmpty
+                  ? const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text("Chưa có danh mục nào. Hãy tạo ở trang chủ!", style: TextStyle(color: Colors.red)),
+              )
+                  : DropdownButtonHideUnderline(
                 child: DropdownButton<String>(
                   value: _selectedCategoryId,
                   isExpanded: true,
                   icon: const Icon(Icons.keyboard_arrow_down, color: Colors.grey),
-                  items: SeedData.categories.map((cat) {
+                  items: categories.map((cat) {
                     return DropdownMenuItem<String>(
-                      value: cat['id'],
+                      value: cat['id'].toString(),
                       child: Row(
                         children: [
                           Icon(Icons.circle, color: Color(cat['colorCode']), size: 14),
@@ -178,7 +215,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                       ),
                     );
                   }).toList(),
-                  onChanged: (val) => setState(() => _selectedCategoryId = val!),
+                  onChanged: (val) => setState(() => _selectedCategoryId = val),
                 ),
               ),
             ),
@@ -263,7 +300,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
             ),
             const SizedBox(height: 20),
 
-            // 5. [MỚI] CHỌN DEADLINE BẰNG PICKER
+            // 5. CHỌN DEADLINE BẰNG PICKER
             const Text("Hạn chót / Deadline (Tùy chọn)", style: TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
             InkWell(

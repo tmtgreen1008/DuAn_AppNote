@@ -136,10 +136,14 @@ class DatabaseHelper {
     final db = await database;
     String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
 
-    // [CẬP NHẬT] Lấy thêm location và dueDate
+    // [CẬP NHẬT] Thêm truy vấn đếm số lượng Subtask
     final res = await db.rawQuery('''
       SELECT ti.id, ti.date, ti.isCompleted, td.title, td.location, td.dueDate, s.name as subjectName, 
-             s.colorCode as subjectColor, c.colorCode as categoryColor, n.remindAt
+             s.colorCode as subjectColor, c.colorCode as categoryColor, n.remindAt,
+             -- [MỚI] Đếm tổng số subtasks
+             (SELECT COUNT(*) FROM subtasks WHERE instanceId = ti.id) as totalSub,
+             -- [MỚI] Đếm số subtasks đã hoàn thành
+             (SELECT COUNT(*) FROM subtasks WHERE instanceId = ti.id AND isCompleted = 1) as completedSub
       FROM task_instances ti
       JOIN tasks_definition td ON ti.taskDefId = td.id
       LEFT JOIN subjects s ON td.subjectId = s.id
@@ -150,32 +154,34 @@ class DatabaseHelper {
 
     return res.map((e) {
       var map = Map<String, dynamic>.from(e);
-      map['colorCode'] = e['subjectColor'] ?? e['categoryColor'];
+      map['colorCode'] = e['subjectColor'] ?? e['categoryColor'] ?? 0xFF2196F3;
       return TaskItem.fromMap(map);
     }).toList();
   }
 
   Future<List<TaskItem>> getTasksByCategory(String categoryId) async {
     final db = await database;
+
+    // [ĐÃ SỬA] Đọc dữ liệu từ bảng thực tế (task_instances) thay vì bảng gốc,
+    // kèm theo các thông tin về phần trăm Subtask giống như màn hình chủ
     final res = await db.rawQuery('''
-      SELECT td.id as id, td.title, td.location, td.dueDate, c.colorCode, s.name as subjectName
-      FROM tasks_definition td
-      JOIN categories c ON td.categoryId = c.id
+      SELECT ti.id, ti.date, ti.isCompleted, td.title, td.location, td.dueDate, s.name as subjectName, 
+             s.colorCode as subjectColor, c.colorCode as categoryColor, n.remindAt,
+             (SELECT COUNT(*) FROM subtasks WHERE instanceId = ti.id) as totalSub,
+             (SELECT COUNT(*) FROM subtasks WHERE instanceId = ti.id AND isCompleted = 1) as completedSub
+      FROM task_instances ti
+      JOIN tasks_definition td ON ti.taskDefId = td.id
       LEFT JOIN subjects s ON td.subjectId = s.id
+      JOIN categories c ON td.categoryId = c.id
+      LEFT JOIN notifications n ON n.instanceId = ti.id
       WHERE td.categoryId = ?
     ''', [categoryId]);
 
-    return res.map((e) => TaskItem(
-      id: e['id'] as String,
-      title: e['title'] as String,
-      date: 'Danh sách tổng',
-      isCompleted: false,
-      colorCode: e['colorCode'] as int,
-      time: '',
-      subjectName: e['subjectName'] as String?,
-      location: e['location'] as String?,
-      dueDate: e['dueDate'] as String?,
-    )).toList();
+    return res.map((e) {
+      var map = Map<String, dynamic>.from(e);
+      map['colorCode'] = e['subjectColor'] ?? e['categoryColor'] ?? 0xFF2196F3;
+      return TaskItem.fromMap(map);
+    }).toList();
   }
 
   Future<void> toggleTask(String id, bool status) async {
@@ -233,9 +239,55 @@ class DatabaseHelper {
     });
   }
 
-  Future<void> toggleSubtask(String id, bool val) async {
+  Future<void> toggleSubtask(String subtaskId, bool isCompleted) async {
     final db = await database;
-    await db.update('subtasks', {'isCompleted': val ? 1 : 0}, where: 'id = ?', whereArgs: [id]);
+
+    // 1. Cập nhật trạng thái cho Subtask mà người dùng vừa ấn
+    await db.update(
+      'subtasks',
+      {'isCompleted': isCompleted ? 1 : 0},
+      where: 'id = ?',
+      whereArgs: [subtaskId],
+    );
+
+    // ==========================================
+    // 2. LOGIC TỰ ĐỘNG HOÀN THÀNH (AUTO-COMPLETE)
+    // ==========================================
+
+    // B1: Lấy ID của công việc chính (instanceId) chứa subtask này
+    final subtaskData = await db.query('subtasks', where: 'id = ?', whereArgs: [subtaskId], limit: 1);
+
+    if (subtaskData.isNotEmpty) {
+      String instanceId = subtaskData.first['instanceId'] as String;
+
+      // B2: Đếm xem công việc chính này CÒN BAO NHIÊU subtask CHƯA làm
+      final result = await db.rawQuery(
+          'SELECT COUNT(*) as count FROM subtasks WHERE instanceId = ? AND isCompleted = 0',
+          [instanceId]
+      );
+
+      int incompleteCount = result.first['count'] as int? ?? 0;
+
+      // B3: Quyết định trạng thái của Công việc chính
+      if (incompleteCount == 0) {
+        // TẤT CẢ SUBTASK ĐÃ XONG -> Tự động đánh dấu Xong cho Task chính
+        await db.update(
+          'task_instances',
+          {'isCompleted': 1},
+          where: 'id = ?',
+          whereArgs: [instanceId],
+        );
+      } else {
+        // CÒN SUBTASK CHƯA XONG -> Đảm bảo Task chính đang ở trạng thái Chưa xong
+        // (Điều này rất hữu ích nếu người dùng lỡ bấm bỏ tick một subtask)
+        await db.update(
+          'task_instances',
+          {'isCompleted': 0},
+          where: 'id = ?',
+          whereArgs: [instanceId],
+        );
+      }
+    }
   }
 
   Future<void> deleteSubtask(String id) async {
@@ -426,10 +478,12 @@ class DatabaseHelper {
     final db = await database;
     String dateStr = DateFormat('yyyy-MM-dd').format(date);
 
-    // [CẬP NHẬT] Lấy thêm location và dueDate
+    // [CẬP NHẬT] Thêm truy vấn đếm số lượng Subtask
     final res = await db.rawQuery('''
       SELECT ti.id, ti.date, ti.isCompleted, td.title, td.location, td.dueDate, s.name as subjectName, 
-             s.colorCode as subjectColor, c.colorCode as categoryColor, n.remindAt
+             s.colorCode as subjectColor, c.colorCode as categoryColor, n.remindAt,
+             (SELECT COUNT(*) FROM subtasks WHERE instanceId = ti.id) as totalSub,
+             (SELECT COUNT(*) FROM subtasks WHERE instanceId = ti.id AND isCompleted = 1) as completedSub
       FROM task_instances ti
       JOIN tasks_definition td ON ti.taskDefId = td.id
       LEFT JOIN subjects s ON td.subjectId = s.id
@@ -564,4 +618,76 @@ class DatabaseHelper {
       print("❌ LỖI KHI XÓA HỌC KỲ: $e");
     }
   }
+  // [MỚI] Hàm lấy TOÀN BỘ công việc để phục vụ cho bộ lọc (Filter)
+  Future<List<TaskItem>> getAllTasks() async {
+    final db = await database;
+
+    final res = await db.rawQuery('''
+      SELECT ti.id, ti.date, ti.isCompleted, td.title, td.location, td.dueDate, s.name as subjectName, 
+             s.colorCode as subjectColor, c.colorCode as categoryColor, n.remindAt,
+             (SELECT COUNT(*) FROM subtasks WHERE instanceId = ti.id) as totalSub,
+             (SELECT COUNT(*) FROM subtasks WHERE instanceId = ti.id AND isCompleted = 1) as completedSub
+      FROM task_instances ti
+      JOIN tasks_definition td ON ti.taskDefId = td.id
+      LEFT JOIN subjects s ON td.subjectId = s.id
+      JOIN categories c ON td.categoryId = c.id
+      LEFT JOIN notifications n ON n.instanceId = ti.id
+    ''');
+
+    return res.map((e) {
+      var map = Map<String, dynamic>.from(e);
+      map['colorCode'] = e['subjectColor'] ?? e['categoryColor'] ?? 0xFF2196F3;
+      return TaskItem.fromMap(map);
+    }).toList();
+  }
+  // ==========================================
+  // [MỚI] QUẢN LÝ DANH MỤC CÔNG VIỆC
+  // ==========================================
+
+  // 1. Lấy danh sách Danh mục kèm số lượng việc CHƯA xong
+  Future<List<Map<String, dynamic>>> getCategoriesWithTaskCount() async {
+    final db = await database;
+    final List<Map<String, dynamic>> maps = await db.rawQuery('''
+      SELECT c.id, c.name, c.colorCode,
+        (SELECT COUNT(*) 
+         FROM task_instances ti 
+         JOIN tasks_definition td ON ti.taskDefId = td.id 
+         WHERE td.categoryId = c.id AND ti.isCompleted = 0) as taskCount
+      FROM categories c
+    ''');
+    return maps;
+  }
+
+  // 2. Thêm một danh mục mới
+  Future<void> insertCategory(String name, int colorCode) async {
+    final db = await database;
+    await db.insert('categories', {
+      'id': DateTime.now().millisecondsSinceEpoch.toString(), // Tạo ID ngẫu nhiên bằng thời gian
+      'name': name,
+      'colorCode': colorCode,
+    });
+  }
+  // Cập nhật (Sửa) danh mục
+  Future<void> updateCategory(String id, String newName, int newColorCode) async {
+    final db = await database;
+    await db.update(
+      'categories',
+      {'name': newName, 'colorCode': newColorCode},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  // Xóa danh mục
+  Future<void> deleteCategory(String id) async {
+    final db = await database;
+    await db.delete(
+      'categories',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    // Lưu ý: Các công việc thuộc danh mục bị xóa vẫn sẽ an toàn,
+    // chúng chỉ tự động chuyển về màu mặc định (Xám) do cơ chế Fallback của ta.
+  }
+
 }

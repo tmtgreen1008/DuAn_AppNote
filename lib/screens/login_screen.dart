@@ -1,8 +1,9 @@
 // File: lib/screens/login_screen.dart
 import 'package:flutter/material.dart';
-import 'dashboard_screen.dart'; // Import màn hình chính của bạn
+import 'main_layout.dart'; // [ĐÃ SỬA] Import MainLayout thay vì DashboardScreen
 import '../services/database_helper.dart'; // Để gọi hàm login
 import 'register_screen.dart'; // Để chuyển sang màn hình đăng ký
+
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -38,7 +39,8 @@ class _LoginScreenState extends State<LoginScreen> {
             );
             Navigator.pushReplacement(
               context,
-              MaterialPageRoute(builder: (context) => const DashboardScreen()),
+              // Gửi tên đăng nhập qua MainLayout
+              MaterialPageRoute(builder: (context) => MainLayout(fullName: user['fullName'] as String)),
             );
           } else {
             // Đăng nhập thất bại (Sai tài khoản/mật khẩu)

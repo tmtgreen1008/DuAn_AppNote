@@ -8,9 +8,13 @@ class TaskItem {
   final int colorCode;
   final String time;
 
-  // [MỚI BỔ SUNG] 2 trường dữ liệu cho Địa điểm và Deadline
+  // 2 trường dữ liệu cho Địa điểm và Deadline
   final String? location;
   final String? dueDate;
+
+  // [MỚI BỔ SUNG] 2 trường dữ liệu cho Subtask (Thanh tiến trình)
+  final int totalSubtasks;
+  final int completedSubtasks;
 
   TaskItem({
     required this.id,
@@ -20,8 +24,10 @@ class TaskItem {
     this.subjectName,
     required this.colorCode,
     required this.time,
-    this.location, // Bổ sung vào constructor
-    this.dueDate,  // Bổ sung vào constructor
+    this.location,
+    this.dueDate,
+    this.totalSubtasks = 0,       // Mặc định là 0 nếu không truyền
+    this.completedSubtasks = 0,   // Mặc định là 0 nếu không truyền
   });
 
   factory TaskItem.fromMap(Map<String, dynamic> map) {
@@ -33,10 +39,12 @@ class TaskItem {
       subjectName: map['subjectName'],
       colorCode: map['subjectColor'] ?? map['categoryColor'] ?? 0xFF9E9E9E,
       time: map['remindAt'] ?? '08:00',
-
-      // [MỚI BỔ SUNG] Lấy dữ liệu từ Map do SQLite trả về
       location: map['location'],
       dueDate: map['dueDate'],
+
+      // [MỚI BỔ SUNG] Lấy dữ liệu đếm Subtask từ câu truy vấn SQL
+      totalSubtasks: map['totalSub'] ?? 0,
+      completedSubtasks: map['completedSub'] ?? 0,
     );
   }
 }
